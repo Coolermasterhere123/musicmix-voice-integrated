@@ -1,0 +1,23 @@
+{
+  "name": "sonicwave",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "groq-sdk": "^0.3.3",
+    "next": "15.3.6",
+    "react": "^18",
+    "react-dom": "^18",
+    "ytdl-core": "^4.11.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "typescript": "^5"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "framework": "nextjs",
+  "functions": {
+    "pages/api/**": {
+      "maxDuration": 30
+    }
+  }
+}
