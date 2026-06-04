@@ -203,7 +203,7 @@ function PlayerProvider({children}:{children:React.ReactNode}){
   const updateMediaSession=useCallback((track:Track,playing:boolean)=>{
     if(typeof window==='undefined'||!('mediaSession' in navigator)) return
     navigator.mediaSession.metadata=new MediaMetadata({
-      title:track.title,artist:track.artist,album:'SonicWave',
+      title:track.title,artist:track.artist,album:'MusicMix',
       artwork:track.thumbnail?[{src:track.thumbnail,sizes:'480x360',type:'image/jpeg'}]:[]
     })
     navigator.mediaSession.playbackState=playing?'playing':'paused'
@@ -572,7 +572,7 @@ function TrackCard({track,list,index,active}:{track:Track;list:Track[];index:num
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 function MainApp(){
-  const{currentTrack,playTrack,addToQueue,setActiveList,queue}=usePlayer()
+  const{currentTrack,playTrack,addToQueue,setActiveList,queue,togglePlay,next,prev,isPlaying}=usePlayer()
   const[view,setView]=useState<'home'|'genre'|'search'>('home')
   const[selectedGenre,setSelectedGenre] =useState<typeof GENRES[0]|null>(null)
   const[searchQuery,setSearchQuery]     =useState('')
@@ -584,6 +584,28 @@ function MainApp(){
   const[playlistSize,setPlaylistSize]   =useState(20)
   const allSuggestedRef=useRef<string[]>([])
   const scrollRef=useRef<HTMLDivElement>(null)
+
+  const [voiceEnabled,setVoiceEnabled]=useState(false)
+  const speak=(text:string)=>{ if(typeof window==='undefined') return; speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(text)) }
+
+  useEffect(()=>{
+    if(typeof window==='undefined' || !voiceEnabled) return
+    const SR=(window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    if(!SR) return
+    const recognition=new SR()
+    recognition.continuous=true
+    recognition.onresult=(event:any)=>{
+      const command=event.results[event.results.length-1][0].transcript.toLowerCase()
+      if(!command.includes('musicmix') && !command.includes('music mix')) return
+      if(command.includes('pause')){ if(isPlaying) togglePlay(); speak('Paused'); return }
+      if(command.includes('play')){ if(!isPlaying) togglePlay(); speak('Playing music'); return }
+      if(command.includes('next')){ next(); speak('Next track'); return }
+      if(command.includes('previous')||command.includes('back')){ prev(); speak('Previous track'); return }
+    }
+    try{recognition.start()}catch{}
+    return ()=>{ try{recognition.stop()}catch{} }
+  },[voiceEnabled,isPlaying,togglePlay,next,prev])
+
 
 
 
@@ -691,9 +713,10 @@ function MainApp(){
       <div style={{flexShrink:0,background:'var(--bg2)',borderBottom:'2px solid var(--border)',padding:'14px 14px 12px',boxSizing:'border-box'}}>
         <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
           <div>
-            <span className="font-display" style={{fontSize:32,color:'var(--accent)',letterSpacing:'0.06em'}}>SONIC</span>
-            <span className="font-display" style={{fontSize:32,color:'var(--text-dim)',letterSpacing:'0.06em',marginLeft:8}}>WAVE</span>
+            <span className="font-display" style={{fontSize:32,color:'var(--accent)',letterSpacing:'0.06em'}}>MUSIC</span>
+            <span className="font-display" style={{fontSize:32,color:'var(--text-dim)',letterSpacing:'0.06em',marginLeft:8}}>MIX</span>
           </div>
+          <button onClick={()=>setVoiceEnabled(v=>!v)} style={{padding:'10px 18px',borderRadius:12,background:voiceEnabled?'var(--accent)':'var(--card)',color:voiceEnabled?'#000':'var(--text)',border:'2px solid var(--border)',marginRight:10}}>🎤</button>
           <button onClick={()=>setShowQueue(s=>!s)}
             style={{padding:'10px 18px',borderRadius:12,
               background:showQueue?'rgba(232,255,71,0.12)':'var(--card)',
@@ -896,14 +919,14 @@ export default function App({Component,pageProps}:AppProps){
   return(
     <PlayerProvider>
       <Head>
-        <title>SonicWave</title>
+        <title>MusicMix</title>
         <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover"/>
         <meta name="theme-color" content="#0a0a0f"/>
         <meta name="description" content="AI-powered music player"/>
         <meta name="mobile-web-app-capable" content="yes"/>
         <meta name="apple-mobile-web-app-capable" content="yes"/>
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
-        <meta name="apple-mobile-web-app-title" content="SonicWave"/>
+        <meta name="apple-mobile-web-app-title" content="MusicMix"/>
         <link rel="manifest" href="/manifest.json"/>
         <link rel="apple-touch-icon" href="/icon-192.png"/>
       </Head>

@@ -1,6 +1,6 @@
 {
-  "name": "SonicWave",
-  "short_name": "SonicWave",
+  "name": "MusicMix",
+  "short_name": "MusicMix",
   "description": "AI-powered music player",
   "start_url": "/",
   "display": "standalone",
