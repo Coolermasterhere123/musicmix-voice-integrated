@@ -803,6 +803,20 @@ useEffect(() => {
     return;
   }
 };
+  // Normal search command
+  if (
+    data.type === 'voiceSearch' ||
+    data.type === 'search'
+  ) {
+    console.log('Voice search received:', query);
+
+    setSearchQuery(query);
+
+    doSearch(query);
+
+    return;
+  }
+};
   window.addEventListener('message', handleMessage);
 
   return () => {
