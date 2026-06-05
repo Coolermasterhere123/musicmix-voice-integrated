@@ -649,40 +649,113 @@ function MainApp(){
     loadGenrePlaylist(genre,false)
   }
 
-  const doSearch=async(q:string,asPlaylist=false)=>{
-    if(!q.trim())return
-    setLoading(true);setView('search');setSearchResults([])
-    try{
-      const seen=new Set<string>()
-      let tracks:Track[]=[]
-      if(asPlaylist){
-        let songs:{title:string;artist:string}[]=[]
-        try{
-          const aiRes=await fetch('/api/generate-playlist',{
-            method:'POST',headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({genre:q,count:30,existingSongs:[]})
+  const doSearch = async (
+  q: string,
+  asPlaylist = false,
+  autoPlay = false
+) => {
+  if (!q.trim()) return
+
+  setLoading(true)
+  setView('search')
+  setSearchResults([])
+
+  try {
+    const seen = new Set<string>()
+    let tracks: Track[] = []
+
+    if (asPlaylist) {
+      let songs: { title: string; artist: string }[] = []
+
+      try {
+        const aiRes = await fetch('/api/generate-playlist', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            genre: q,
+            count: 30,
+            existingSongs: []
           })
-          if(aiRes.ok){const d=await aiRes.json();songs=d.songs||[]}
-        }catch{}
-        const direct=await ytSearch(q)
-        for(const t of direct){if(!seen.has(t.id)){seen.add(t.id);tracks.push(t)}}
-        if(songs.length){
-          const batchSize=6
-          for(let i=0;i<Math.min(songs.length,24);i+=batchSize){
-            const batch=songs.slice(i,i+batchSize)
-            const results=await Promise.all(batch.map(s=>ytSearch(`${s.artist} ${s.title} official`)))
-            for(const res of results){for(const t of res.slice(0,2)){if(!seen.has(t.id)){seen.add(t.id);tracks.push(t)}}}
+        })
+
+        if (aiRes.ok) {
+          const d = await aiRes.json()
+          songs = d.songs || []
+        }
+      } catch {}
+
+      const direct = await ytSearch(q)
+
+      for (const t of direct) {
+        if (!seen.has(t.id)) {
+          seen.add(t.id)
+          tracks.push(t)
+        }
+      }
+
+      if (songs.length) {
+        const batchSize = 6
+
+        for (
+          let i = 0;
+          i < Math.min(songs.length, 24);
+          i += batchSize
+        ) {
+          const batch = songs.slice(i, i + batchSize)
+
+          const results = await Promise.all(
+            batch.map(s =>
+              ytSearch(`${s.artist} ${s.title} official`)
+            )
+          )
+
+          for (const res of results) {
+            for (const t of res.slice(0, 2)) {
+              if (!seen.has(t.id)) {
+                seen.add(t.id)
+                tracks.push(t)
+              }
+            }
           }
         }
-      }else{
-        const queries=[q,`${q} official audio`,`${q} music video`,`best of ${q}`]
-        const results=await Promise.all(queries.map(qu=>ytSearch(qu)))
-        for(const res of results){for(const t of res){if(!seen.has(t.id)){seen.add(t.id);tracks.push(t)}}}
-        tracks=tracks.sort(()=>Math.random()-0.5)
       }
-      setSearchResults(tracks);setActiveList(tracks)
-    }finally{setLoading(false)}
+    } else {
+      const queries = [
+        q,
+        `${q} official audio`,
+        `${q} music video`,
+        `${q} official`
+      ]
+
+      const results = await Promise.all(
+        queries.map(qu => ytSearch(qu))
+      )
+
+      for (const res of results) {
+        for (const t of res) {
+          if (!seen.has(t.id)) {
+            seen.add(t.id)
+            tracks.push(t)
+          }
+        }
+      }
+
+      // NO RANDOM SHUFFLE HERE
+      // Search API already ranks best matches first
+    }
+
+    setSearchResults(tracks)
+    setActiveList(tracks)
+
+    // Voice Play mode
+    if (autoPlay && tracks.length > 0) {
+      addToQueue(tracks)
+      playTrack(tracks[0], tracks)
+    }
+  } finally {
+    setLoading(false)
   }
+}
 useEffect(() => {
   console.log('Voice listener registered');
 
