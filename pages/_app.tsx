@@ -587,40 +587,34 @@ function MainApp(){
 
 
 
+  const mapTrack=(v:any):Track=>({
+    id:v.id,youtubeId:v.id,title:v.title,artist:v.channel,
+    channel:v.channel,thumbnail:v.thumbnail,duration:v.duration,
+    source:'youtube' as const,isMix:false,playlistId:undefined,
+    durationSecs:v.durationSecs,
+  })
+
   const ytSearch=async(q:string):Promise<Track[]>=>{
     try{
-      const r=await fetch('/api/search-youtube?q='+encodeURIComponent(q)).then(r=>r.json())
-      return(r.results||[]).map((v:any):Track=>({
-        id:v.id,youtubeId:v.id,title:v.title,artist:v.channel,
-        channel:v.channel,thumbnail:v.thumbnail,duration:v.duration,
-        source:'youtube',isMix:!!(v.isMix),playlistId:v.playlistId||undefined,
-        durationSecs:v.durationSecs,
-      }))
+      const r=await fetch('/api/search-youtube?q='+encodeURIComponent(q)+'&mode=song').then(r=>r.json())
+      return(r.results||[]).map(mapTrack)
     }catch{return[]}
   }
 
-  // Artist-only search — strict mode, sorted by view count
+  // Artist search — 3 parallel queries, merged, sorted by view count (popularity)
   const ytSearchArtist=async(artist:string):Promise<Track[]>=>{
     try{
-      // Run 3 targeted searches in parallel for best coverage
+      const enc=(s:string)=>encodeURIComponent(s)
       const [r1,r2,r3]=await Promise.all([
-        fetch(`/api/search-youtube?q=${encodeURIComponent(artist+' official audio')}&artistOnly=1`).then(r=>r.json()),
-        fetch(`/api/search-youtube?q=${encodeURIComponent(artist+' official video')}&artistOnly=1`).then(r=>r.json()),
-        fetch(`/api/search-youtube?q=${encodeURIComponent('"'+artist+'" song')}&artistOnly=1`).then(r=>r.json()),
+        fetch(`/api/search-youtube?q=${enc(artist)}&mode=artist`).then(r=>r.json()),
+        fetch(`/api/search-youtube?q=${enc(artist+' official video')}&mode=artist`).then(r=>r.json()),
+        fetch(`/api/search-youtube?q=${enc(artist+' official audio')}&mode=artist`).then(r=>r.json()),
       ])
       const seen=new Set<string>()
-      const all=[...(r1.results||[]),...(r2.results||[]),...(r3.results||[])]
+      return [...(r1.results||[]),...(r2.results||[]),...(r3.results||[])]
         .filter((v:any)=>{ if(seen.has(v.id)) return false; seen.add(v.id); return true })
-        // Sort by view count descending — most popular songs first
         .sort((a:any,b:any)=>(b.viewCount||0)-(a.viewCount||0))
-        // Filter out junk
-        .filter((v:any)=>!v.isMix&&!v.playlistId)
-      return all.map((v:any):Track=>({
-        id:v.id,youtubeId:v.id,title:v.title,artist:v.channel,
-        channel:v.channel,thumbnail:v.thumbnail,duration:v.duration,
-        source:'youtube',isMix:false,playlistId:undefined,
-        durationSecs:v.durationSecs,
-      }))
+        .map(mapTrack)
     }catch{return[]}
   }
 
