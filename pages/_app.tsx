@@ -649,182 +649,96 @@ function MainApp(){
     loadGenrePlaylist(genre,false)
   }
 
-  const doSearch = async (
-  q: string,
-  asPlaylist = false,
-  autoPlay = false
-) => {
-  if (!q.trim()) return
-
-  setLoading(true)
-  setView('search')
-  setSearchResults([])
-
-  try {
-    const seen = new Set<string>()
-    let tracks: Track[] = []
-
-    if (asPlaylist) {
-      let songs: { title: string; artist: string }[] = []
-
-      try {
-        const aiRes = await fetch('/api/generate-playlist', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            genre: q,
-            count: 30,
-            existingSongs: []
+  const doSearch=async(q:string,asPlaylist=false)=>{
+    if(!q.trim())return
+    setLoading(true);setView('search');setSearchResults([])
+    try{
+      const seen=new Set<string>()
+      let tracks:Track[]=[]
+      if(asPlaylist){
+        let songs:{title:string;artist:string}[]=[]
+        try{
+          const aiRes=await fetch('/api/generate-playlist',{
+            method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({genre:q,count:30,existingSongs:[]})
           })
-        })
-
-        if (aiRes.ok) {
-          const d = await aiRes.json()
-          songs = d.songs || []
-        }
-      } catch {}
-
-      const direct = await ytSearch(q)
-
-      for (const t of direct) {
-        if (!seen.has(t.id)) {
-          seen.add(t.id)
-          tracks.push(t)
-        }
-      }
-
-      if (songs.length) {
-        const batchSize = 6
-
-        for (
-          let i = 0;
-          i < Math.min(songs.length, 24);
-          i += batchSize
-        ) {
-          const batch = songs.slice(i, i + batchSize)
-
-          const results = await Promise.all(
-            batch.map(s =>
-              ytSearch(`${s.artist} ${s.title} official`)
-            )
-          )
-
-          for (const res of results) {
-            for (const t of res.slice(0, 2)) {
-              if (!seen.has(t.id)) {
-                seen.add(t.id)
-                tracks.push(t)
-              }
-            }
+          if(aiRes.ok){const d=await aiRes.json();songs=d.songs||[]}
+        }catch{}
+        const direct=await ytSearch(q)
+        for(const t of direct){if(!seen.has(t.id)){seen.add(t.id);tracks.push(t)}}
+        if(songs.length){
+          const batchSize=6
+          for(let i=0;i<Math.min(songs.length,24);i+=batchSize){
+            const batch=songs.slice(i,i+batchSize)
+            const results=await Promise.all(batch.map(s=>ytSearch(`${s.artist} ${s.title} official`)))
+            for(const res of results){for(const t of res.slice(0,2)){if(!seen.has(t.id)){seen.add(t.id);tracks.push(t)}}}
           }
         }
+      }else{
+        const queries=[q,`${q} official audio`,`${q} music video`,`best of ${q}`]
+        const results=await Promise.all(queries.map(qu=>ytSearch(qu)))
+        for(const res of results){for(const t of res){if(!seen.has(t.id)){seen.add(t.id);tracks.push(t)}}}
+        tracks=tracks.sort(()=>Math.random()-0.5)
       }
-    } else {
-      const queries = [
-        q,
-        `${q} official audio`,
-        `${q} music video`,
-        `${q} official`
-      ]
-
-      const results = await Promise.all(
-        queries.map(qu => ytSearch(qu))
-      )
-
-      for (const res of results) {
-        for (const t of res) {
-          if (!seen.has(t.id)) {
-            seen.add(t.id)
-            tracks.push(t)
-          }
-        }
-      }
-
-      // NO RANDOM SHUFFLE HERE
-      // Search API already ranks best matches first
-    }
-
-    setSearchResults(tracks)
-    setActiveList(tracks)
-
-    // Voice Play mode
-    if (autoPlay && tracks.length > 0) {
-      addToQueue(tracks)
-      playTrack(tracks[0], tracks)
-    }
-  } finally {
-    setLoading(false)
+      setSearchResults(tracks);setActiveList(tracks)
+    }finally{setLoading(false)}
   }
-}
-useEffect(() => {
-  console.log('Voice listener registered');
 
-  const handleMessage = (event: MessageEvent) => {
-    const data = event.data;
+  // ── Voice search: play best match immediately, auto-queue more from same artist ──
+  const doVoiceSearch=async(q:string)=>{
+    if(!q.trim())return
+    setLoading(true)
+    try{
+      // 1. Search for the exact song
+      const results=await ytSearch(q)
+      // Pick best non-mix single track
+      const best=results.find(t=>!t.isMix&&!t.playlistId)||results[0]
+      if(!best){setLoading(false);return}
 
-    // Ignore YouTube iframe messages
-    if (
-      !data ||
-      typeof data !== 'object' ||
-      (!data.type && !data.query)
-    ) {
-      return;
-    }
+      // 2. Play immediately — no waiting for results list
+      playTrack(best,[best])
 
-    console.log('Received message:', data);
+      // 3. In background, fetch more songs from same artist and auto-queue them
+      const artist=best.artist||best.channel||''
+      if(artist){
+        const artistTracks=await ytSearch(`${artist} official audio`)
+        const more=artistTracks
+          .filter(t=>!t.isMix&&!t.playlistId&&t.id!==best.id)
+          .slice(0,15)
+        const fullList=[best,...more]
+        setActiveList(fullList)
+        addToQueue(more)
+        setSearchResults(fullList)
+      }
 
-    const query = String(data.query || '').trim();
-    if (!query) return;
+      // 4. Show what's playing
+      setSearchQuery(q)
+      setView('search')
+    }finally{setLoading(false)}
+  }
 
-    // Voice PLAY command
-    if (data.type === 'voicePlay') {
-      console.log('Voice play received:', query);
-      setSearchQuery(query);
-      doSearch(query, false, true);
-      return;
-    }
-
-    // Normal search command
-    if (
-      data.type === 'voiceSearch' ||
-      data.type === 'search'
-    ) {
-      console.log('Voice search received:', query);
-      setSearchQuery(query);
-      doSearch(query);
-      return;
-    }
-  };
-
-  // === VOICE PLAY ROUTER ===
-  // Automatically converts "Play XXX" commands to voicePlay
-  const originalPostMessage = window.postMessage.bind(window);
-  const routedPostMessage = (data: any, ...args: any[]) => {
-    if (data?.type === 'voiceSearch') {
-      const cmd = String(data.query || '').trim();
-      if (cmd.toLowerCase().startsWith('play ')) {
-        console.log('🔀 Routed "Play" command to voicePlay:', cmd);
-        return originalPostMessage.call(window, {
-          type: 'voicePlay',
-          query: cmd.substring(5).trim()
-        }, ...args);
+  // ── postMessage + native bridge listener ─────────────────────────────────
+  useEffect(()=>{
+    const handleMessage=(event:MessageEvent)=>{
+      const data=event.data
+      if(!data||typeof data!=='object'||(!data.type&&!data.query)) return
+      if(data.type==='voiceSearch'||data.type==='search'){
+        const query=String(data.query||'').trim()
+        if(!query) return
+        if(data.type==='voiceSearch'){
+          doVoiceSearch(query)
+        } else {
+          setSearchQuery(query)
+          doSearch(query)
+        }
       }
     }
-    return originalPostMessage.call(window, data, ...args);
-  };
-
-  (window as any).postMessage = routedPostMessage;
-
-  window.addEventListener('message', handleMessage);
-
-  return () => {
-    window.removeEventListener('message', handleMessage);
-    (window as any).postMessage = originalPostMessage;
-  };
-}, [doSearch]); // <-- make sure this is the end of useEffect
-
-// Now, your component's JSX return
-return (
+    window.addEventListener('message',handleMessage)
+    // Expose globally so Android native WebView injection can call it directly
+    ;(window as any).voiceSearch=(q:string)=>doVoiceSearch(q)
+    return()=>window.removeEventListener('message',handleMessage)
+  },[])
+  return(
     <div style={{display:'flex',height:'100dvh',flexDirection:'column',overflow:'hidden',background:'var(--bg)'}}>
 
       {/* TOP BAR */}
