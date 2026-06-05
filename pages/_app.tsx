@@ -601,19 +601,22 @@ function MainApp(){
     }catch{return[]}
   }
 
-  // Artist search — 3 parallel queries, merged, sorted by view count (popularity)
+  // Artist search — runs multiple queries, merges, sorts by view count
   const ytSearchArtist=async(artist:string):Promise<Track[]>=>{
     try{
       const enc=(s:string)=>encodeURIComponent(s)
-      const [r1,r2,r3]=await Promise.all([
-        fetch(`/api/search-youtube?q=${enc(artist)}&mode=artist`).then(r=>r.json()),
-        fetch(`/api/search-youtube?q=${enc(artist+' official video')}&mode=artist`).then(r=>r.json()),
-        fetch(`/api/search-youtube?q=${enc(artist+' official audio')}&mode=artist`).then(r=>r.json()),
+      const base=artist.trim()
+      const [r1,r2,r3,r4]=await Promise.all([
+        fetch(`/api/search-youtube?q=${enc(base)}&mode=artist`).then(r=>r.json()),
+        fetch(`/api/search-youtube?q=${enc(base+' official video')}&mode=artist`).then(r=>r.json()),
+        fetch(`/api/search-youtube?q=${enc(base+' official audio')}&mode=artist`).then(r=>r.json()),
+        fetch(`/api/search-youtube?q=${enc(base+' topic')}&mode=artist`).then(r=>r.json()),
       ])
       const seen=new Set<string>()
-      return [...(r1.results||[]),...(r2.results||[]),...(r3.results||[])]
+      return[...(r1.results||[]),...(r2.results||[]),...(r3.results||[]),...(r4.results||[])]
         .filter((v:any)=>{ if(seen.has(v.id)) return false; seen.add(v.id); return true })
         .sort((a:any,b:any)=>(b.viewCount||0)-(a.viewCount||0))
+        .slice(0,25)
         .map(mapTrack)
     }catch{return[]}
   }
