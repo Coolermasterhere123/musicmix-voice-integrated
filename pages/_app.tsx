@@ -689,10 +689,19 @@ function MainApp(){
     if(!q.trim())return
     setLoading(true)
     try{
-      // 1. Search for the exact song
-      const results=await ytSearch(q)
+      // 1. Run two parallel searches: exact query + "official audio" variant
+      //    This massively improves match quality for voice queries like "Ratt Round and Round"
+      const [r1,r2]=await Promise.all([
+        ytSearch(q),
+        ytSearch(`${q} official audio`)
+      ])
+      // Merge, deduplicate, keep highest score
+      const seen=new Set<string>()
+      const merged=[...r1,...r2].filter(t=>{ if(seen.has(t.id))return false; seen.add(t.id); return true })
+      merged.sort((a:any,b:any)=>(b.score||0)-(a.score||0))
+
       // Pick best non-mix single track
-      const best=results.find(t=>!t.isMix&&!t.playlistId)||results[0]
+      const best=merged.find((t:any)=>!t.isMix&&!t.playlistId)||merged[0]
       if(!best){setLoading(false);return}
 
       // 2. Play immediately — no waiting for results list
@@ -701,10 +710,15 @@ function MainApp(){
       // 3. In background, fetch more songs from same artist and auto-queue them
       const artist=best.artist||best.channel||''
       if(artist){
-        const artistTracks=await ytSearch(`${artist} official audio`)
-        const more=artistTracks
-          .filter(t=>!t.isMix&&!t.playlistId&&t.id!==best.id)
-          .slice(0,15)
+        // Search for more by this artist, avoiding mixes/compilations
+        const [a1,a2]=await Promise.all([
+          ytSearch(`${artist} official audio`),
+          ytSearch(`${artist} greatest songs`)
+        ])
+        const artistSeen=new Set<string>([best.id])
+        const more=[...a1,...a2]
+          .filter(t=>{ if(artistSeen.has(t.id)||t.isMix||t.playlistId)return false; artistSeen.add(t.id); return true })
+          .slice(0,20)
         const fullList=[best,...more]
         setActiveList(fullList)
         addToQueue(more)
@@ -734,10 +748,45 @@ function MainApp(){
       }
     }
     window.addEventListener('message',handleMessage)
-    // Expose globally so Android native WebView injection can call it directly
     ;(window as any).voiceSearch=(q:string)=>doVoiceSearch(q)
     return()=>window.removeEventListener('message',handleMessage)
   },[])
+
+  // ── Bluetooth auto-start + car stereo controls ───────────────────────────
+  const p=usePlayer()
+  useEffect(()=>{
+    // Android calls this when Bluetooth A2DP audio device connects
+    ;(window as any).bluetoothAutoStart=()=>{
+      if(!p.currentTrack){
+        // Nothing was playing — pick a random genre and start
+        const g=GENRES[Math.floor(Math.random()*GENRES.length)]
+        selectGenre(g)
+      } else if(!p.isPlaying){
+        // Resume whatever was playing before
+        p.togglePlay()
+      }
+    }
+    // Android calls this when Bluetooth disconnects
+    ;(window as any).bluetoothDisconnected=()=>{
+      if(p.isPlaying) p.togglePlay()
+    }
+    // Android calls this for car stereo hardware button presses
+    ;(window as any).carControl=(action:string)=>{
+      if(action==='togglePlay') p.togglePlay()
+      else if(action==='next') p.next()
+      else if(action==='prev') p.prev()
+      else if(action==='stop'&&p.isPlaying) p.togglePlay()
+    }
+    // Also handle postMessage from Android for BT events
+    const btHandler=(e:MessageEvent)=>{
+      if(!e.data?.type) return
+      if(e.data.type==='bluetoothConnected') (window as any).bluetoothAutoStart?.()
+      if(e.data.type==='bluetoothDisconnected') (window as any).bluetoothDisconnected?.()
+    }
+    window.addEventListener('message',btHandler)
+    return()=>window.removeEventListener('message',btHandler)
+  },[p.currentTrack,p.isPlaying,p.togglePlay,p.next,p.prev])
+
   return(
     <div style={{display:'flex',height:'100dvh',flexDirection:'column',overflow:'hidden',background:'var(--bg)'}}>
 
