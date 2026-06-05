@@ -687,14 +687,22 @@ useEffect(() => {
   console.log('Voice listener registered');
 
   const handleMessage = (event: MessageEvent) => {
-   
-    const data: any = event.data;
+    const data = event.data;
+
+    // Ignore YouTube iframe messages
+    if (
+      !data ||
+      typeof data !== 'object' ||
+      (!data.type && !data.query)
+    ) {
+      return;
+    }
 
     console.log('Received message:', data);
 
     if (
-      data?.type === 'voiceSearch' ||
-      data?.type === 'search'
+      data.type === 'voiceSearch' ||
+      data.type === 'search'
     ) {
       const query = String(data.query || '').trim();
 
@@ -702,12 +710,8 @@ useEffect(() => {
 
       console.log('Voice search received:', query);
 
-      // Fill search box
       setSearchQuery(query);
-
-      
       doSearch(query);
-       
     }
   };
 
