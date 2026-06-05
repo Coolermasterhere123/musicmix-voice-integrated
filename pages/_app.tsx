@@ -2,7 +2,7 @@ import '../styles/globals.css'
 import type { AppProps } from 'next/app'
 import { useState, useEffect, useRef, useCallback, createContext, useContext } from 'react'
 import Head from 'next/head'
-
+ 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Track {
   id: string; title: string; artist: string; thumbnail?: string
