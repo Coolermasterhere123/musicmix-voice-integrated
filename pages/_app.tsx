@@ -688,47 +688,60 @@ function MainApp(){
   const doVoiceSearch=async(q:string)=>{
     if(!q.trim())return
     setLoading(true)
+    setView('search')
+    setSearchQuery(q)
+    setSearchResults([])
+
     try{
-      // 1. Run two parallel searches: exact query + "official audio" variant
-      //    This massively improves match quality for voice queries like "Ratt Round and Round"
+      // 1. Two parallel searches for best match
       const [r1,r2]=await Promise.all([
         ytSearch(q),
         ytSearch(`${q} official audio`)
       ])
-      // Merge, deduplicate, keep highest score
+
+      // Merge + deduplicate, sort by score
       const seen=new Set<string>()
-      const merged=[...r1,...r2].filter(t=>{ if(seen.has(t.id))return false; seen.add(t.id); return true })
+      const merged=[...r1,...r2].filter(t=>{
+        if(seen.has(t.id)) return false
+        seen.add(t.id)
+        return true
+      })
       merged.sort((a:any,b:any)=>(b.score||0)-(a.score||0))
 
-      // Pick best non-mix single track
+      // Best non-mix single track
       const best=merged.find((t:any)=>!t.isMix&&!t.playlistId)||merged[0]
-      if(!best){setLoading(false);return}
+      if(!best) return
 
-      // 2. Play immediately — no waiting for results list
-      playTrack(best,[best])
-
-      // 3. In background, fetch more songs from same artist and auto-queue them
+      // 2. Fetch more from same artist IN PARALLEL — don't wait to show UI
       const artist=best.artist||best.channel||''
-      if(artist){
-        // Search for more by this artist, avoiding mixes/compilations
-        const [a1,a2]=await Promise.all([
-          ytSearch(`${artist} official audio`),
-          ytSearch(`${artist} greatest songs`)
-        ])
-        const artistSeen=new Set<string>([best.id])
-        const more=[...a1,...a2]
-          .filter(t=>{ if(artistSeen.has(t.id)||t.isMix||t.playlistId)return false; artistSeen.add(t.id); return true })
-          .slice(0,20)
-        const fullList=[best,...more]
-        setActiveList(fullList)
-        addToQueue(more)
-        setSearchResults(fullList)
-      }
+      const [a1,a2]=await Promise.all([
+        artist ? ytSearch(`${artist} official audio`) : Promise.resolve([] as Track[]),
+        artist ? ytSearch(`${artist} songs`)          : Promise.resolve([] as Track[])
+      ])
 
-      // 4. Show what's playing
-      setSearchQuery(q)
-      setView('search')
-    }finally{setLoading(false)}
+      // Build full list: best first, then more artist tracks, deduped
+      const artistSeen=new Set<string>([best.id])
+      const more=[...a1,...a2].filter(t=>{
+        if(artistSeen.has(t.id)||t.isMix||t.playlistId) return false
+        artistSeen.add(t.id)
+        return true
+      }).slice(0,25)
+
+      const fullList:Track[]=[best,...more]
+
+      // 3. Set everything BEFORE playing so activeList is already the full list
+      setSearchResults(fullList)
+      setActiveList(fullList)
+
+      // 4. Play best track with full list as context — no more overwriting to [best]
+      playTrack(best, fullList)
+
+      // 5. Queue the rest
+      addToQueue(more)
+
+    }finally{
+      setLoading(false)
+    }
   }
 
   // ── postMessage + native bridge listener ─────────────────────────────────
