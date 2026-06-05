@@ -675,30 +675,14 @@ function MainApp(){
           }
         }
       }else{
-  const queries=[q,`${q} official audio`,`${q} music video`,`best of ${q}`]
-  const results=await Promise.all(queries.map(qu=>ytSearch(qu)))
-  for(const res of results){
-    for(const t of res){
-      if(!seen.has(t.id)){
-        seen.add(t.id)
-        tracks.push(t)
+        const queries=[q,`${q} official audio`,`${q} music video`,`best of ${q}`]
+        const results=await Promise.all(queries.map(qu=>ytSearch(qu)))
+        for(const res of results){for(const t of res){if(!seen.has(t.id)){seen.add(t.id);tracks.push(t)}}}
+        tracks=tracks.sort(()=>Math.random()-0.5)
       }
-    }
+      setSearchResults(tracks);setActiveList(tracks)
+    }finally{setLoading(false)}
   }
-  tracks=tracks.sort(()=>Math.random()-0.5)
-}
-
-setSearchResults(tracks);
-setActiveList(tracks);
-
-if (tracks.length > 0) {
-  addToQueue(tracks);
-  playTrack(tracks[0], tracks);
-}
-
-}finally{
-  setLoading(false)
-}
 useEffect(() => {
   console.log('Voice listener registered');
 
