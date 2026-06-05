@@ -821,9 +821,10 @@ useEffect(() => {
     window.removeEventListener('message', handleMessage);
     (window as any).postMessage = originalPostMessage;
   };
-}, [doSearch]);
-}, []);
-  return(
+}, [doSearch]); // <-- make sure this is the end of useEffect
+
+// Now, your component's JSX return
+return (
     <div style={{display:'flex',height:'100dvh',flexDirection:'column',overflow:'hidden',background:'var(--bg)'}}>
 
       {/* TOP BAR */}
