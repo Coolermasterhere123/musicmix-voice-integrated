@@ -760,68 +760,68 @@ useEffect(() => {
   console.log('Voice listener registered');
 
   const handleMessage = (event: MessageEvent) => {
-  const data = event.data;
+    const data = event.data;
 
-  // Ignore YouTube iframe messages
-  if (
-    !data ||
-    typeof data !== 'object' ||
-    (!data.type && !data.query)
-  ) {
-    return;
-  }
+    // Ignore YouTube iframe messages
+    if (
+      !data ||
+      typeof data !== 'object' ||
+      (!data.type && !data.query)
+    ) {
+      return;
+    }
 
-  console.log('Received message:', data);
+    console.log('Received message:', data);
 
-  const query = String(data.query || '').trim();
+    const query = String(data.query || '').trim();
+    if (!query) return;
 
-  if (!query) return;
+    // Voice PLAY command
+    if (data.type === 'voicePlay') {
+      console.log('Voice play received:', query);
+      setSearchQuery(query);
+      doSearch(query, false, true);
+      return;
+    }
 
-  // Voice PLAY command
-  if (data.type === 'voicePlay') {
-    console.log('Voice play received:', query);
+    // Normal search command
+    if (
+      data.type === 'voiceSearch' ||
+      data.type === 'search'
+    ) {
+      console.log('Voice search received:', query);
+      setSearchQuery(query);
+      doSearch(query);
+      return;
+    }
+  };
 
-    setSearchQuery(query);
+  // === VOICE PLAY ROUTER ===
+  // Automatically converts "Play XXX" commands to voicePlay
+  const originalPostMessage = window.postMessage.bind(window);
+  const routedPostMessage = (data: any, ...args: any[]) => {
+    if (data?.type === 'voiceSearch') {
+      const cmd = String(data.query || '').trim();
+      if (cmd.toLowerCase().startsWith('play ')) {
+        console.log('🔀 Routed "Play" command to voicePlay:', cmd);
+        return originalPostMessage.call(window, {
+          type: 'voicePlay',
+          query: cmd.substring(5).trim()
+        }, ...args);
+      }
+    }
+    return originalPostMessage.call(window, data, ...args);
+  };
 
-    // Search and immediately play first result
-    doSearch(query, false, true);
+  (window as any).postMessage = routedPostMessage;
 
-    return;
-  }
-
-  // Normal search command
-  if (
-    data.type === 'voiceSearch' ||
-    data.type === 'search'
-  ) {
-    console.log('Voice search received:', query);
-
-    setSearchQuery(query);
-
-    doSearch(query);
-
-    return;
-  }
-};
-  // Normal search command
-  if (
-    data.type === 'voiceSearch' ||
-    data.type === 'search'
-  ) {
-    console.log('Voice search received:', query);
-
-    setSearchQuery(query);
-
-    doSearch(query);
-
-    return;
-  }
-};
   window.addEventListener('message', handleMessage);
 
   return () => {
     window.removeEventListener('message', handleMessage);
+    (window as any).postMessage = originalPostMessage;
   };
+}, [doSearch]);
 }, []);
   return(
     <div style={{display:'flex',height:'100dvh',flexDirection:'column',overflow:'hidden',background:'var(--bg)'}}>
