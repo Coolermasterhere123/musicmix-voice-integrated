@@ -594,7 +594,32 @@ function MainApp(){
         id:v.id,youtubeId:v.id,title:v.title,artist:v.channel,
         channel:v.channel,thumbnail:v.thumbnail,duration:v.duration,
         source:'youtube',isMix:!!(v.isMix),playlistId:v.playlistId||undefined,
-        durationSecs:v.durationSecs
+        durationSecs:v.durationSecs,
+      }))
+    }catch{return[]}
+  }
+
+  // Artist-only search — strict mode, sorted by view count
+  const ytSearchArtist=async(artist:string):Promise<Track[]>=>{
+    try{
+      // Run 3 targeted searches in parallel for best coverage
+      const [r1,r2,r3]=await Promise.all([
+        fetch(`/api/search-youtube?q=${encodeURIComponent(artist+' official audio')}&artistOnly=1`).then(r=>r.json()),
+        fetch(`/api/search-youtube?q=${encodeURIComponent(artist+' official video')}&artistOnly=1`).then(r=>r.json()),
+        fetch(`/api/search-youtube?q=${encodeURIComponent('"'+artist+'" song')}&artistOnly=1`).then(r=>r.json()),
+      ])
+      const seen=new Set<string>()
+      const all=[...(r1.results||[]),...(r2.results||[]),...(r3.results||[])]
+        .filter((v:any)=>{ if(seen.has(v.id)) return false; seen.add(v.id); return true })
+        // Sort by view count descending — most popular songs first
+        .sort((a:any,b:any)=>(b.viewCount||0)-(a.viewCount||0))
+        // Filter out junk
+        .filter((v:any)=>!v.isMix&&!v.playlistId)
+      return all.map((v:any):Track=>({
+        id:v.id,youtubeId:v.id,title:v.title,artist:v.channel,
+        channel:v.channel,thumbnail:v.thumbnail,duration:v.duration,
+        source:'youtube',isMix:false,playlistId:undefined,
+        durationSecs:v.durationSecs,
       }))
     }catch{return[]}
   }
@@ -693,50 +718,32 @@ function MainApp(){
     setSearchResults([])
 
     try{
-      // 1. Two parallel searches for best match
+      // 1. Find the best matching song
       const [r1,r2]=await Promise.all([
         ytSearch(q),
         ytSearch(`${q} official audio`)
       ])
-
-      // Merge + deduplicate, sort by score
       const seen=new Set<string>()
       const merged=[...r1,...r2].filter(t=>{
-        if(seen.has(t.id)) return false
-        seen.add(t.id)
-        return true
+        if(seen.has(t.id)) return false; seen.add(t.id); return true
       })
       merged.sort((a:any,b:any)=>(b.score||0)-(a.score||0))
-
-      // Best non-mix single track
       const best=merged.find((t:any)=>!t.isMix&&!t.playlistId)||merged[0]
       if(!best) return
 
-      // 2. Fetch more from same artist IN PARALLEL — don't wait to show UI
+      // 2. Fetch more from same artist using STRICT artist search sorted by views
       const artist=best.artist||best.channel||''
-      const [a1,a2]=await Promise.all([
-        artist ? ytSearch(`${artist} official audio`) : Promise.resolve([] as Track[]),
-        artist ? ytSearch(`${artist} songs`)          : Promise.resolve([] as Track[])
-      ])
+      const more = artist ? (await ytSearchArtist(artist))
+        .filter(t=>t.id!==best.id)
+        .slice(0,25) : []
 
-      // Build full list: best first, then more artist tracks, deduped
-      const artistSeen=new Set<string>([best.id])
-      const more=[...a1,...a2].filter(t=>{
-        if(artistSeen.has(t.id)||t.isMix||t.playlistId) return false
-        artistSeen.add(t.id)
-        return true
-      }).slice(0,25)
-
+      // 3. Build full list — best track first, then most-viewed artist songs
       const fullList:Track[]=[best,...more]
 
-      // 3. Set everything BEFORE playing so activeList is already the full list
+      // 4. Set state before playing so activeList is correct from the start
       setSearchResults(fullList)
       setActiveList(fullList)
-
-      // 4. Play best track with full list as context — no more overwriting to [best]
-      playTrack(best, fullList)
-
-      // 5. Queue the rest
+      playTrack(best,fullList)
       addToQueue(more)
 
     }finally{
