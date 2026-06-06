@@ -28,7 +28,7 @@ const GENRES = [
   { id:'pop',         label:'Pop',          icon:'🌟', color:'#3498db', queries:['pop music hits','popular songs','pop songs 2020s','best pop music'] },
   { id:'metal',       label:'Metal',        icon:'🤘', color:'#e74c3c', queries:['heavy metal songs','metal music','metal hits','best metal bands'] },
   { id:'country',     label:'Country',      icon:'🤠', color:'#f39c12', queries:['country music songs','country hits','best country songs','country music'] },
-  { id:'grunge',      label:'Grunge',       icon:'⚡', color:'#8e44ad', queries:['grunge music','grunge songs','90s grunge','grunge rock hits'] },
+  { id:'radio',       label:'Radio',        icon:'📻', color:'#00bcd4', queries:[] },
   { id:'alternative', label:'Alternative',  icon:'🌀', color:'#27ae60', queries:['alternative rock','alt rock hits','best alternative songs','indie rock hits'] },
   { id:'classicrock', label:'Classic Rock', icon:'🏟️', color:'#c0392b', queries:['classic rock songs','70s rock music','80s rock hits','classic rock anthems'] },
   { id:'hairnation',  label:'Hair Nation',  icon:'🦁', color:'#ff1493', queries:['80s hair metal','glam metal songs','hair band rock','80s rock ballads hair metal'] },
@@ -573,7 +573,7 @@ function TrackCard({track,list,index,active}:{track:Track;list:Track[];index:num
 // ─── Main App ─────────────────────────────────────────────────────────────────
 function MainApp(){
   const{currentTrack,playTrack,addToQueue,setActiveList,queue}=usePlayer()
-  const[view,setView]=useState<'home'|'genre'|'search'>('home')
+  const[view,setView]=useState<'home'|'genre'|'search'|'radio'>('home')
   const[selectedGenre,setSelectedGenre] =useState<typeof GENRES[0]|null>(null)
   const[searchQuery,setSearchQuery]     =useState('')
   const[searchResults,setSearchResults] =useState<Track[]>([])
@@ -583,6 +583,7 @@ function MainApp(){
   const[showQueue,setShowQueue]         =useState(false)
   const[playlistSize,setPlaylistSize]   =useState(20)
   const allSuggestedRef=useRef<string[]>([])
+  const radioAudioRef=useRef<HTMLAudioElement|null>(null)
   const scrollRef=useRef<HTMLDivElement>(null)
 
 
@@ -693,7 +694,90 @@ function MainApp(){
     }finally{setLoading(false);setLoadingMore(false)}
   }
 
+  // ── Radio stations — shuffled fresh each time ──────────────────────────────
+  const ALL_STATIONS = [
+    {name:'KROQ 106.7',       genre:'Alt Rock',    url:'https://sovereignrights.leanstream.co/KROQFMAAC-SC',          logo:'📻'},
+    {name:'K-ROCK 92.3',      genre:'Classic Rock',url:'https://live.amperwave.net/direct/audacy-wbcnamfmp3-ibc2',    logo:'🎸'},
+    {name:'Radio Paradise',   genre:'Rock Mix',    url:'https://stream.radioparadise.com/rock-320',                   logo:'🌍'},
+    {name:'Classic Rock Florida',genre:'Classic Rock',url:'https://19143.live.streamtheworld.com/WRKQFM_SC',          logo:'🏟️'},
+    {name:'Jack FM',           genre:'Variety Rock',url:'https://18173.live.streamtheworld.com/KJJKFM_SC',            logo:'🎵'},
+    {name:'Arrow Classic Rock',genre:'Classic Rock',url:'https://19993.live.streamtheworld.com/ARROW.mp3',            logo:'🏹'},
+    {name:'Planet Rock',       genre:'Hard Rock',   url:'https://stream-mz.planetradio.co.uk/planetrock.mp3',          logo:'🪐'},
+    {name:'Absolute Radio',    genre:'Rock',        url:'https://stream-mz.planetradio.co.uk/absoluteradio.mp3',       logo:'🔊'},
+    {name:'Rock Antenne',      genre:'Hard Rock',   url:'https://stream.rockantenne.de/rockantenne/stream/mp3',        logo:'📡'},
+    {name:'Metal Hammer Radio',genre:'Metal',       url:'https://stream-mz.planetradio.co.uk/kerrang.mp3',             logo:'🤘'},
+    {name:'Kerrang Radio',     genre:'Metal/Rock',  url:'https://stream-mz.planetradio.co.uk/kerrang.mp3',             logo:'💥'},
+    {name:'977 The Eagle',     genre:'Classic Rock',url:'https://977music.com/streams/eagle.pls',                      logo:'🦅'},
+    {name:'Totally 80s Rock',  genre:'80s Rock',    url:'https://ice2.securenetsystems.net/TOTALLY80S',                logo:'⚡'},
+    {name:'Hair Nation',       genre:'Hair Metal',  url:'https://stream.revma.ihrhls.com/zc2513',                      logo:'🦁'},
+    {name:'Ozzy\'s Boneyard',  genre:'Hard Rock',   url:'https://stream.revma.ihrhls.com/zc2169',                      logo:'🦴'},
+    {name:'Octane',            genre:'Hard Rock',   url:'https://stream.revma.ihrhls.com/zc2153',                      logo:'🔥'},
+    {name:'Turbo',             genre:'Hard Rock',   url:'https://stream.revma.ihrhls.com/zc2157',                      logo:'⚡'},
+    {name:'Lithium',           genre:'90s Alt Rock',url:'https://stream.revma.ihrhls.com/zc2161',                      logo:'🌀'},
+    {name:'Pearl Jam Radio',   genre:'Alt Rock',    url:'https://stream.revma.ihrhls.com/zc4225',                      logo:'🌊'},
+    {name:'The Spectrum',      genre:'Soft Rock',   url:'https://stream.revma.ihrhls.com/zc2165',                      logo:'🌈'},
+    {name:'Classic Vinyl',     genre:'70s Rock',    url:'https://stream.revma.ihrhls.com/zc2145',                      logo:'💿'},
+    {name:'Classic Rewind',    genre:'80s Rock',    url:'https://stream.revma.ihrhls.com/zc2141',                      logo:'⏪'},
+    {name:'Deep Tracks',       genre:'Album Rock',  url:'https://stream.revma.ihrhls.com/zc2149',                      logo:'🎵'},
+    {name:'The Bridge',        genre:'Soft Rock',   url:'https://stream.revma.ihrhls.com/zc2173',                      logo:'🌉'},
+    {name:'1st Wave',          genre:'80s New Wave',url:'https://stream.revma.ihrhls.com/zc2125',                      logo:'🌊'},
+    {name:'80s on 8',          genre:'80s Pop Rock',url:'https://stream.revma.ihrhls.com/zc2121',                      logo:'8️⃣'},
+    {name:'90s on 9',          genre:'90s Pop Rock',url:'https://stream.revma.ihrhls.com/zc2129',                      logo:'9️⃣'},
+    {name:'Pop2K',             genre:'2000s Pop',   url:'https://stream.revma.ihrhls.com/zc2133',                      logo:'🎤'},
+    {name:'Hits 1',            genre:'Pop Hits',    url:'https://stream.revma.ihrhls.com/zc2105',                      logo:'🌟'},
+    {name:'The Pulse',         genre:'Pop Hits',    url:'https://stream.revma.ihrhls.com/zc2109',                      logo:'💓'},
+    {name:'Party Hits',        genre:'Pop',         url:'https://stream.revma.ihrhls.com/zc2113',                      logo:'🎉'},
+    {name:'Alt Nation',        genre:'Alt Rock',    url:'https://stream.revma.ihrhls.com/zc2177',                      logo:'🏴'},
+    {name:'Faction Punk',      genre:'Punk Rock',   url:'https://stream.revma.ihrhls.com/zc2181',                      logo:'✊'},
+    {name:'RUSH',              genre:'Classic Rock',url:'https://stream.revma.ihrhls.com/zc4209',                      logo:'⚡'},
+    {name:'Tom Petty Radio',   genre:'Classic Rock',url:'https://stream.revma.ihrhls.com/zc4213',                      logo:'🎵'},
+    {name:'Eagles Radio',      genre:'Classic Rock',url:'https://stream.revma.ihrhls.com/zc4229',                      logo:'🦅'},
+    {name:'Grateful Dead',     genre:'Rock',        url:'https://stream.revma.ihrhls.com/zc4233',                      logo:'💀'},
+    {name:'Fleetwood Mac Radio',genre:'Classic Rock',url:'https://stream.revma.ihrhls.com/zc4253',                     logo:'🌊'},
+    {name:'SiriusXM Heart',    genre:'Soft Rock',   url:'https://stream.revma.ihrhls.com/zc4261',                      logo:'❤️'},
+    {name:'Joel\'s House',     genre:'Pop Rock',    url:'https://stream.revma.ihrhls.com/zc4265',                      logo:'🏠'},
+    {name:'Yacht Rock',        genre:'Soft Rock',   url:'https://stream.revma.ihrhls.com/zc4269',                      logo:'⛵'},
+    {name:'WNYC Alt Rock',     genre:'Alt Rock',    url:'https://fm939.wnyc.org/wnycfm-ibc.aac',                       logo:'🗽'},
+    {name:'BBC Radio 1',       genre:'Pop/Rock',    url:'https://stream.live.asm.ca/bbcradio1',                        logo:'🇬🇧'},
+    {name:'BBC Radio 2',       genre:'Soft Rock',   url:'https://stream.live.asm.ca/bbcradio2',                        logo:'🇬🇧'},
+    {name:'BBC Radio 6',       genre:'Alt Rock',    url:'https://stream.live.asm.ca/bbcradio6',                        logo:'🎵'},
+    {name:'WMMR 93.3',         genre:'Classic Rock',url:'https://live.wostreaming.net/proxy/cumulus-wmmrfmaac-ibc3',   logo:'🎸'},
+    {name:'Q104.3 NYC',        genre:'Classic Rock',url:'https://live.wostreaming.net/proxy/audacy-waxqfmaac-ibc3',    logo:'🏙️'},
+    {name:'105.7 The X',       genre:'Rock',        url:'https://live.wostreaming.net/proxy/emmis-wxrpfmaac-ibc3',     logo:'❌'},
+    {name:'Free Rock Radio',   genre:'Rock',        url:'https://streams.fluxfm.de/rock/mp3-320/streams.fluxfm.de/',  logo:'🤟'},
+    {name:'Rock FM Spain',     genre:'Rock',        url:'https://playerservices.streamtheworld.com/api/livestream-redirect/ROCKFM.mp3', logo:'🎙️'},
+  ]
+
+  const[radioStations,setRadioStations]=useState<typeof ALL_STATIONS>([])
+  const[playingStation,setPlayingStation]=useState<string|null>(null)
+  const radioAudioRef=useRef<HTMLAudioElement|null>(null)
+
+  const openRadio=()=>{
+    // Shuffle and pick 50 random stations
+    const shuffled=[...ALL_STATIONS].sort(()=>Math.random()-0.5).slice(0,50)
+    setRadioStations(shuffled)
+    setView('radio')
+  }
+
+  const playStation=(station:typeof ALL_STATIONS[0])=>{
+    setPlayingStation(station.name)
+    if(!radioAudioRef.current) radioAudioRef.current=new Audio()
+    const audio=radioAudioRef.current
+    audio.pause()
+    audio.src=station.url
+    audio.play().catch(()=>{
+      // Try again — some streams need a moment
+      setTimeout(()=>audio.play().catch(()=>{}),500)
+    })
+  }
+
+  const stopRadio=()=>{
+    radioAudioRef.current?.pause()
+    setPlayingStation(null)
+  }
+
   const selectGenre=(genre:typeof GENRES[0])=>{
+    if(genre.id==='radio'){ openRadio(); return }
     setSelectedGenre(genre);setView('genre')
     allSuggestedRef.current=[]
     loadGenrePlaylist(genre,false)
@@ -834,6 +918,46 @@ function MainApp(){
         {view==='home'&&!loading&&(
           <div style={{textAlign:'center',padding:'50px 24px'}}>
             <div style={{fontSize:22,color:'var(--text-dim)',lineHeight:2}}>👆 Pick a genre above<br/>or search for any artist</div>
+          </div>
+        )}
+
+        {view==='radio'&&(
+          <div style={{padding:'16px 14px'}}>
+            <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:16}}>
+              <h2 style={{fontSize:32,color:'#00bcd4'}}>📻 RADIO STATIONS</h2>
+              <button onClick={openRadio}
+                style={{marginLeft:'auto',padding:'10px 18px',borderRadius:12,background:'#00bcd422',
+                  color:'#00bcd4',border:'2px solid #00bcd4',fontSize:15,fontWeight:700,cursor:'pointer'}}>
+                ↺ Reshuffle
+              </button>
+              {playingStation&&(
+                <button onClick={stopRadio}
+                  style={{padding:'10px 18px',borderRadius:12,background:'#ff174422',
+                    color:'#ff1744',border:'2px solid #ff1744',fontSize:15,fontWeight:700,cursor:'pointer'}}>
+                  ⏹ Stop
+                </button>
+              )}
+            </div>
+            <div style={{display:'flex',flexDirection:'column',gap:10}}>
+              {radioStations.map((s,i)=>(
+                <button key={i} onClick={()=>playingStation===s.name?stopRadio():playStation(s)}
+                  style={{display:'flex',alignItems:'center',gap:14,padding:'14px 16px',
+                    borderRadius:14,textAlign:'left',cursor:'pointer',
+                    background:playingStation===s.name?'#00bcd422':'var(--card)',
+                    border:playingStation===s.name?'2px solid #00bcd4':'2px solid var(--border)',
+                    transition:'all 0.15s'}}>
+                  <span style={{fontSize:28,flexShrink:0}}>{s.logo}</span>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontWeight:700,fontSize:16,color:playingStation===s.name?'#00bcd4':'var(--text)',
+                      whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+                      {playingStation===s.name?'▶ ':''}{s.name}
+                    </div>
+                    <div style={{fontSize:13,color:'var(--text-muted)',marginTop:2}}>{s.genre}</div>
+                  </div>
+                  <span style={{fontSize:20,flexShrink:0}}>{playingStation===s.name?'🔊':'▶'}</span>
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
