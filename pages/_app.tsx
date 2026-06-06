@@ -750,7 +750,6 @@ function MainApp(){
 
   const[radioStations,setRadioStations]=useState<typeof ALL_STATIONS>([])
   const[playingStation,setPlayingStation]=useState<string|null>(null)
-  const radioAudioRef=useRef<HTMLAudioElement|null>(null)
 
   const openRadio=()=>{
     // Shuffle and pick 50 random stations
