@@ -6,7 +6,7 @@ import Head from 'next/head'
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Track {
   id: string; title: string; artist: string; thumbnail?: string
-  duration?: string; source: 'youtube'; channel?: string; youtubeId?: string
+  duration?: string; source: 'youtube'|'soundcloud'; channel?: string; youtubeId?: string; permalinkUrl?: string; scClientId?: string
   playlistId?: string; isMix?: boolean; durationSecs?: number
 }
 interface PlayerCtx {
@@ -218,7 +218,7 @@ function PlayerProvider({children}:{children:React.ReactNode}){
   },[])
   useEffect(()=>{ switchToIframeRef.current=switchToIframe },[switchToIframe])
 
-  // Main play function — tries native audio first, falls back to iframe
+  // Main play function — SoundCloud native audio, YouTube iframe fallback
   const playTrackInner=useCallback(async(track:Track)=>{
     const vid=track.youtubeId||track.id
     setCurrentTrack(track); currentRef.current=track
@@ -231,7 +231,33 @@ function PlayerProvider({children}:{children:React.ReactNode}){
     if(audioModeRef.current==='iframe') ytPlayer.current?.pauseVideo?.()
     clearInterval(progressInt.current)
 
-    // Try direct audio URL (works in background on iOS)
+    // ── SoundCloud: get direct stream URL ────────────────────────────────────
+    if(track.source==='soundcloud'){
+      try{
+        const cid=track.scClientId?`&clientId=${track.scClientId}`:''
+        const resp=await fetch(`/api/sc-stream?trackId=${track.id}${cid}`)
+        if(resp.ok){
+          const data=await resp.json()
+          if(data.streamUrl){
+            const audio=nativeAudio.current!
+            audio.src=data.streamUrl
+            audio.load()
+            audioModeRef.current='native'
+            await audio.play()
+            silentAudio.current?.play().catch(()=>{})
+            setLoadingAudio(false)
+            return
+          }
+        }
+      }catch(e){ console.log('SC stream failed, skipping') }
+      setLoadingAudio(false)
+      // If SC fails, try next track
+      const nxt=getNextRef.current?.(currentRef.current)
+      if(nxt) setTimeout(()=>playInnerRef.current?.(nxt),500)
+      return
+    }
+
+    // ── YouTube: try direct audio first, fallback to iframe ──────────────────
     try{
       const resp=await fetch(`/api/yt-audio?videoId=${vid}`)
       if(resp.ok){
@@ -587,37 +613,44 @@ function MainApp(){
 
 
 
-  const mapTrack=(v:any):Track=>({
-    id:v.id,youtubeId:v.id,title:v.title,artist:v.channel,
-    channel:v.channel,thumbnail:v.thumbnail,duration:v.duration,
-    source:'youtube' as const,isMix:false,playlistId:undefined,
+  const mapSCTrack=(v:any):Track=>({
+    id:          String(v.id),
+    youtubeId:   undefined,
+    title:       v.title,
+    artist:      v.channel||v.artist||'',
+    channel:     v.channel||v.artist||'',
+    thumbnail:   v.thumbnail||'',
+    duration:    v.duration||'',
+    source:      'soundcloud' as const,
+    isMix:       false,
+    playlistId:  undefined,
     durationSecs:v.durationSecs,
+    permalinkUrl:v.permalinkUrl||'',
+    scClientId:  v.clientId||'',
   })
 
   const ytSearch=async(q:string):Promise<Track[]>=>{
     try{
-      const r=await fetch('/api/search-youtube?q='+encodeURIComponent(q)+'&mode=song').then(r=>r.json())
-      return(r.results||[]).map(mapTrack)
+      const r=await fetch('/api/search-soundcloud?q='+encodeURIComponent(q)+'&mode=song').then(r=>r.json())
+      return(r.results||[]).map(mapSCTrack)
     }catch{return[]}
   }
 
-  // Artist search — runs multiple queries, merges, sorts by view count
+  // Artist search — sorted by play count
   const ytSearchArtist=async(artist:string):Promise<Track[]>=>{
     try{
       const enc=(s:string)=>encodeURIComponent(s)
       const base=artist.trim()
-      const [r1,r2,r3,r4]=await Promise.all([
-        fetch(`/api/search-youtube?q=${enc(base)}&mode=artist`).then(r=>r.json()),
-        fetch(`/api/search-youtube?q=${enc(base+' official video')}&mode=artist`).then(r=>r.json()),
-        fetch(`/api/search-youtube?q=${enc(base+' official audio')}&mode=artist`).then(r=>r.json()),
-        fetch(`/api/search-youtube?q=${enc(base+' topic')}&mode=artist`).then(r=>r.json()),
+      const [r1,r2]=await Promise.all([
+        fetch(`/api/search-soundcloud?q=${enc(base)}&mode=artist`).then(r=>r.json()),
+        fetch(`/api/search-soundcloud?q=${enc(base+' official')}&mode=artist`).then(r=>r.json()),
       ])
       const seen=new Set<string>()
-      return[...(r1.results||[]),...(r2.results||[]),...(r3.results||[]),...(r4.results||[])]
-        .filter((v:any)=>{ if(seen.has(v.id)) return false; seen.add(v.id); return true })
+      return[...(r1.results||[]),...(r2.results||[])]
+        .filter((v:any)=>{ if(seen.has(String(v.id))) return false; seen.add(String(v.id)); return true })
         .sort((a:any,b:any)=>(b.viewCount||0)-(a.viewCount||0))
         .slice(0,25)
-        .map(mapTrack)
+        .map(mapSCTrack)
     }catch{return[]}
   }
 
@@ -715,34 +748,18 @@ function MainApp(){
     setSearchResults([])
 
     try{
-      // 1. Find the best matching song
-      const [r1,r2]=await Promise.all([
-        ytSearch(q),
-        ytSearch(`${q} official audio`)
-      ])
-      const seen=new Set<string>()
-      const merged=[...r1,...r2].filter(t=>{
-        if(seen.has(t.id)) return false; seen.add(t.id); return true
-      })
-      merged.sort((a:any,b:any)=>(b.score||0)-(a.score||0))
-      const best=merged.find((t:any)=>!t.isMix&&!t.playlistId)||merged[0]
-      if(!best) return
+      // Get results for the query directly — no filtering, no merging
+      const results=await ytSearchArtist(q)
+      if(!results.length){ setLoading(false); return }
 
-      // 2. Fetch more from same artist using STRICT artist search sorted by views
-      const artist=best.artist||best.channel||''
-      const more = artist ? (await ytSearchArtist(artist))
-        .filter(t=>t.id!==best.id)
-        .slice(0,25) : []
+      const best=results[0]
+      const rest=results.slice(1)
+      const fullList:Track[]=[best,...rest]
 
-      // 3. Build full list — best track first, then most-viewed artist songs
-      const fullList:Track[]=[best,...more]
-
-      // 4. Set state before playing so activeList is correct from the start
       setSearchResults(fullList)
       setActiveList(fullList)
       playTrack(best,fullList)
-      addToQueue(more)
-
+      addToQueue(rest)
     }finally{
       setLoading(false)
     }
