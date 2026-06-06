@@ -572,7 +572,7 @@ function TrackCard({track,list,index,active}:{track:Track;list:Track[];index:num
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 function MainApp(){
-  const{currentTrack,playTrack,addToQueue,setActiveList,queue}=usePlayer()
+  const{currentTrack,playTrack,addToQueue,setActiveList,queue,togglePlay,next,prev,isPlaying}=usePlayer()
   const[view,setView]=useState<'home'|'genre'|'search'|'radio'>('home')
   const[selectedGenre,setSelectedGenre] =useState<typeof GENRES[0]|null>(null)
   const[searchQuery,setSearchQuery]     =useState('')
@@ -831,6 +831,46 @@ function MainApp(){
     }
     window.addEventListener('message',handleMessage)
     ;(window as any).voiceSearch=(q:string)=>doVoiceSearch(q)
+
+    // ── Car stereo controls ───────────────────────────────────────────────────
+    ;(window as any).carControl=(action:string)=>{
+      if(view==='radio'){
+        const idx=radioStations.findIndex((s:any)=>s.name===playingStation)
+        if(action==='next'){
+          const n=radioStations[(idx+1)%radioStations.length]
+          if(n) playStation(n)
+        } else if(action==='prev'){
+          const p=radioStations[(idx-1+radioStations.length)%radioStations.length]
+          if(p) playStation(p)
+        } else if(action==='togglePlay'){
+          if(playingStation) stopRadio()
+          else if(radioStations.length) playStation(radioStations[0])
+        } else if(action==='stop'){
+          stopRadio()
+        }
+      } else {
+        if(action==='togglePlay') togglePlay()
+        else if(action==='next')  next()
+        else if(action==='prev')  prev()
+        else if(action==='stop'&&isPlaying) togglePlay()
+      }
+    }
+
+    // ── Bluetooth auto-start ──────────────────────────────────────────────────
+    ;(window as any).bluetoothAutoStart=()=>{
+      if(view==='radio'){
+        if(!playingStation&&radioStations.length) playStation(radioStations[0])
+      } else if(currentTrack){
+        if(!isPlaying) togglePlay()
+      } else {
+        const g=GENRES.filter(x=>x.id!=='radio')
+        selectGenre(g[Math.floor(Math.random()*g.length)])
+      }
+    }
+    ;(window as any).bluetoothDisconnected=()=>{
+      if(isPlaying) togglePlay()
+      if(playingStation) stopRadio()
+    }
     return()=>window.removeEventListener('message',handleMessage)
   },[])
   return(
