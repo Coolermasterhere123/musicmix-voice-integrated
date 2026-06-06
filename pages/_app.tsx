@@ -6,7 +6,7 @@ import Head from 'next/head'
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Track {
   id: string; title: string; artist: string; thumbnail?: string
-  duration?: string; source: 'youtube'|'soundcloud'; channel?: string; youtubeId?: string; permalinkUrl?: string; scClientId?: string
+  duration?: string; source: 'youtube'; channel?: string; youtubeId?: string
   playlistId?: string; isMix?: boolean; durationSecs?: number
 }
 interface PlayerCtx {
@@ -218,7 +218,7 @@ function PlayerProvider({children}:{children:React.ReactNode}){
   },[])
   useEffect(()=>{ switchToIframeRef.current=switchToIframe },[switchToIframe])
 
-  // Main play function — SoundCloud native audio, YouTube iframe fallback
+  // Main play function — tries native audio first, falls back to iframe
   const playTrackInner=useCallback(async(track:Track)=>{
     const vid=track.youtubeId||track.id
     setCurrentTrack(track); currentRef.current=track
@@ -231,54 +231,7 @@ function PlayerProvider({children}:{children:React.ReactNode}){
     if(audioModeRef.current==='iframe') ytPlayer.current?.pauseVideo?.()
     clearInterval(progressInt.current)
 
-    // ── SoundCloud: use widget iframe — works entirely in browser ────────────
-    if(track.source==='soundcloud'){
-      audioModeRef.current='iframe'
-      setLoadingAudio(false)
-      const iframe=document.getElementById('sc-widget') as HTMLIFrameElement
-      if(iframe){
-        // SoundCloud widget embed URL using the track permalink
-        const url=track.permalinkUrl||''
-        if(url){
-          const embedUrl=`https://w.soundcloud.com/player/?url=${encodeURIComponent(url)}&auto_play=true&hide_related=true&show_comments=false&show_user=false&show_reposts=false&buying=false&liking=false&download=false&sharing=false&show_artwork=false&show_playcount=false&visual=false&color=%23e040fb`
-          iframe.src=embedUrl
-          iframe.style.width='1px'
-          iframe.style.height='1px'
-          // Listen for widget events via postMessage
-          const onMsg=(e:MessageEvent)=>{
-            try{
-              const d=typeof e.data==='string'?JSON.parse(e.data):e.data
-              if(d?.soundcloud===undefined&&!d?.method) return
-              if(d.method==='onFinish'||d?.value?.loadProgress===1&&d?.value?.relativePosition===1){
-                const nxt=getNextRef.current?.(currentRef.current)
-                if(nxt) setTimeout(()=>playInnerRef.current?.(nxt),300)
-              }
-            }catch{}
-          }
-          window.addEventListener('message',onMsg)
-          // Auto-advance after duration as fallback
-          if(track.durationSecs&&track.durationSecs>0){
-            const timer=setTimeout(()=>{
-              window.removeEventListener('message',onMsg)
-              const nxt=getNextRef.current?.(currentRef.current)
-              if(nxt) playInnerRef.current?.(nxt)
-            },(track.durationSecs+5)*1000)
-            // Clean up on next track
-            const cleanup=()=>{ clearTimeout(timer); window.removeEventListener('message',onMsg); window.removeEventListener('beforeplay',cleanup) }
-            window.addEventListener('beforeplay',cleanup,{once:true})
-          }
-          setIsPlaying(true); isPlayingRef.current=true
-          silentAudio.current?.play().catch(()=>{})
-          return
-        }
-      }
-      // No permalink — skip to next
-      const nxt=getNextRef.current?.(currentRef.current)
-      if(nxt) setTimeout(()=>playInnerRef.current?.(nxt),300)
-      return
-    }
-
-    // ── YouTube: try direct audio first, fallback to iframe ──────────────────
+    // Try direct audio URL (works in background on iOS)
     try{
       const resp=await fetch(`/api/yt-audio?videoId=${vid}`)
       if(resp.ok){
@@ -367,7 +320,6 @@ function PlayerProvider({children}:{children:React.ReactNode}){
       )}
       <div style={{position:'fixed',bottom:-9999,left:-9999,width:1,height:1,overflow:'hidden',pointerEvents:'none'}} aria-hidden="true">
         <div id="yt-iframe"/>
-        <iframe id="sc-widget" allow="autoplay" style={{width:1,height:1,border:'none'}}/>
       </div>
     </Ctx.Provider>
   )
@@ -635,43 +587,66 @@ function MainApp(){
 
 
 
-  const mapSCTrack=(v:any):Track=>({
-    id:          String(v.id),
-    youtubeId:   undefined,
-    title:       v.title,
-    artist:      v.user?.username||v.channel||v.artist||'',
-    channel:     v.user?.username||v.channel||v.artist||'',
-    thumbnail:   (v.artwork_url||v.thumbnail||'').replace('large','t300x300'),
-    duration:    v.duration ? `${Math.floor(v.duration/60000)}:${String(Math.floor((v.duration%60000)/1000)).padStart(2,'0')}` : v.dur||'',
-    source:      'soundcloud' as const,
-    isMix:       false,
-    playlistId:  undefined,
-    durationSecs:v.duration ? Math.round(v.duration/1000) : v.durationSecs||0,
-    permalinkUrl:v.permalink_url||v.permalinkUrl||'',
-    scClientId:  '',
-  })
-
   const ytSearch=async(q:string):Promise<Track[]>=>{
     try{
-      const r=await fetch('/api/search-soundcloud?q='+encodeURIComponent(q)+'&mode=song').then(r=>r.json())
-      return(r.results||[]).map(mapSCTrack)
+      const r=await fetch('/api/search-youtube?q='+encodeURIComponent(q)).then(r=>r.json())
+      return(r.results||[]).map((v:any):Track=>({
+        id:v.id,youtubeId:v.id,title:v.title,artist:v.channel,
+        channel:v.channel,thumbnail:v.thumbnail,duration:v.duration,
+        source:'youtube',isMix:!!(v.isMix),playlistId:v.playlistId||undefined,
+        durationSecs:v.durationSecs
+      }))
     }catch{return[]}
   }
 
   const ytSearchArtist=async(artist:string):Promise<Track[]>=>{
     try{
       const enc=(s:string)=>encodeURIComponent(s)
-      const [r1,r2]=await Promise.all([
-        fetch(`/api/search-soundcloud?q=${enc(artist)}&mode=artist`).then(r=>r.json()),
-        fetch(`/api/search-soundcloud?q=${enc(artist+' official')}&mode=artist`).then(r=>r.json()),
+      const [r1,r2,r3]=await Promise.all([
+        fetch('/api/search-youtube?q='+enc(artist)).then(r=>r.json()),
+        fetch('/api/search-youtube?q='+enc(artist+' official video')).then(r=>r.json()),
+        fetch('/api/search-youtube?q='+enc(artist+' official audio')).then(r=>r.json()),
       ])
       const seen=new Set<string>()
-      return[...(r1.results||[]),...(r2.results||[])]
-        .filter((v:any)=>{ if(seen.has(String(v.id))) return false; seen.add(String(v.id)); return true })
-        .sort((a:any,b:any)=>(b.viewCount||0)-(a.viewCount||0))
-        .slice(0,25)
-        .map(mapSCTrack)
+      return [...(r1.results||[]),...(r2.results||[]),...(r3.results||[])]
+        .filter((v:any)=>{ if(seen.has(v.id)) return false; seen.add(v.id); return true })
+        .sort((a:any,b:any)=>(b.viewCount||b.score||0)-(a.viewCount||a.score||0))
+        .slice(0,20)
+        .map((v:any):Track=>({
+          id:v.id,youtubeId:v.id,title:v.title,artist:v.channel,
+          channel:v.channel,thumbnail:v.thumbnail,duration:v.duration,
+          source:'youtube',isMix:false,playlistId:undefined,
+          durationSecs:v.durationSecs
+        }))
     }catch{return[]}
+  }
+
+  const doVoiceSearch=async(q:string)=>{
+    if(!q.trim()) return
+    setLoading(true)
+    setView('search')
+    setSearchQuery(q)
+    setSearchResults([])
+    try{
+      // Search for the specific song first
+      const songResults=await ytSearch(q)
+      const best=songResults[0]
+      if(!best){ setLoading(false); return }
+
+      // Get more from same artist sorted by popularity
+      const artist=best.artist||best.channel||''
+      const more=artist
+        ? (await ytSearchArtist(artist)).filter(t=>t.id!==best.id).slice(0,19)
+        : songResults.slice(1,19)
+
+      const fullList:Track[]=[best,...more]
+      setSearchResults(fullList)
+      setActiveList(fullList)
+      playTrack(best,fullList)
+      addToQueue(more)
+    }finally{
+      setLoading(false)
+    }
   }
 
   const loadGenrePlaylist=async(genre:typeof GENRES[0],more=false)=>{
@@ -758,34 +733,6 @@ function MainApp(){
       setSearchResults(tracks);setActiveList(tracks)
     }finally{setLoading(false)}
   }
-
-  // ── Voice search: play best match immediately, auto-queue more from same artist ──
-  const doVoiceSearch=async(q:string)=>{
-    if(!q.trim())return
-    setLoading(true)
-    setView('search')
-    setSearchQuery(q)
-    setSearchResults([])
-
-    try{
-      // Get results for the query directly — no filtering, no merging
-      const results=await ytSearchArtist(q)
-      if(!results.length){ setLoading(false); return }
-
-      const best=results[0]
-      const rest=results.slice(1)
-      const fullList:Track[]=[best,...rest]
-
-      setSearchResults(fullList)
-      setActiveList(fullList)
-      playTrack(best,fullList)
-      addToQueue(rest)
-    }finally{
-      setLoading(false)
-    }
-  }
-
-  // ── postMessage + native bridge listener ─────────────────────────────────
   useEffect(()=>{
     const handleMessage=(event:MessageEvent)=>{
       const data=event.data
@@ -793,54 +740,14 @@ function MainApp(){
       if(data.type==='voiceSearch'||data.type==='search'){
         const query=String(data.query||'').trim()
         if(!query) return
-        if(data.type==='voiceSearch'){
-          doVoiceSearch(query)
-        } else {
-          setSearchQuery(query)
-          doSearch(query)
-        }
+        if(data.type==='voiceSearch') doVoiceSearch(query)
+        else { setSearchQuery(query); doSearch(query) }
       }
     }
     window.addEventListener('message',handleMessage)
     ;(window as any).voiceSearch=(q:string)=>doVoiceSearch(q)
     return()=>window.removeEventListener('message',handleMessage)
   },[])
-
-  // ── Bluetooth auto-start + car stereo controls ───────────────────────────
-  const p=usePlayer()
-  useEffect(()=>{
-    // Android calls this when Bluetooth A2DP audio device connects
-    ;(window as any).bluetoothAutoStart=()=>{
-      if(!p.currentTrack){
-        // Nothing was playing — pick a random genre and start
-        const g=GENRES[Math.floor(Math.random()*GENRES.length)]
-        selectGenre(g)
-      } else if(!p.isPlaying){
-        // Resume whatever was playing before
-        p.togglePlay()
-      }
-    }
-    // Android calls this when Bluetooth disconnects
-    ;(window as any).bluetoothDisconnected=()=>{
-      if(p.isPlaying) p.togglePlay()
-    }
-    // Android calls this for car stereo hardware button presses
-    ;(window as any).carControl=(action:string)=>{
-      if(action==='togglePlay') p.togglePlay()
-      else if(action==='next') p.next()
-      else if(action==='prev') p.prev()
-      else if(action==='stop'&&p.isPlaying) p.togglePlay()
-    }
-    // Also handle postMessage from Android for BT events
-    const btHandler=(e:MessageEvent)=>{
-      if(!e.data?.type) return
-      if(e.data.type==='bluetoothConnected') (window as any).bluetoothAutoStart?.()
-      if(e.data.type==='bluetoothDisconnected') (window as any).bluetoothDisconnected?.()
-    }
-    window.addEventListener('message',btHandler)
-    return()=>window.removeEventListener('message',btHandler)
-  },[p.currentTrack,p.isPlaying,p.togglePlay,p.next,p.prev])
-
   return(
     <div style={{display:'flex',height:'100dvh',flexDirection:'column',overflow:'hidden',background:'var(--bg)'}}>
 
