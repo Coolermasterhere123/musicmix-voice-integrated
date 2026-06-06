@@ -231,29 +231,50 @@ function PlayerProvider({children}:{children:React.ReactNode}){
     if(audioModeRef.current==='iframe') ytPlayer.current?.pauseVideo?.()
     clearInterval(progressInt.current)
 
-    // ── SoundCloud: get direct stream URL ────────────────────────────────────
+    // ── SoundCloud: use widget iframe — works entirely in browser ────────────
     if(track.source==='soundcloud'){
-      try{
-        const cid=track.scClientId?`&clientId=${track.scClientId}`:''
-        const resp=await fetch(`/api/sc-stream?trackId=${track.id}${cid}`)
-        if(resp.ok){
-          const data=await resp.json()
-          if(data.streamUrl){
-            const audio=nativeAudio.current!
-            audio.src=data.streamUrl
-            audio.load()
-            audioModeRef.current='native'
-            await audio.play()
-            silentAudio.current?.play().catch(()=>{})
-            setLoadingAudio(false)
-            return
-          }
-        }
-      }catch(e){ console.log('SC stream failed, skipping') }
+      audioModeRef.current='iframe'
       setLoadingAudio(false)
-      // If SC fails, try next track
+      const iframe=document.getElementById('sc-widget') as HTMLIFrameElement
+      if(iframe){
+        // SoundCloud widget embed URL using the track permalink
+        const url=track.permalinkUrl||''
+        if(url){
+          const embedUrl=`https://w.soundcloud.com/player/?url=${encodeURIComponent(url)}&auto_play=true&hide_related=true&show_comments=false&show_user=false&show_reposts=false&buying=false&liking=false&download=false&sharing=false&show_artwork=false&show_playcount=false&visual=false&color=%23e040fb`
+          iframe.src=embedUrl
+          iframe.style.width='1px'
+          iframe.style.height='1px'
+          // Listen for widget events via postMessage
+          const onMsg=(e:MessageEvent)=>{
+            try{
+              const d=typeof e.data==='string'?JSON.parse(e.data):e.data
+              if(d?.soundcloud===undefined&&!d?.method) return
+              if(d.method==='onFinish'||d?.value?.loadProgress===1&&d?.value?.relativePosition===1){
+                const nxt=getNextRef.current?.(currentRef.current)
+                if(nxt) setTimeout(()=>playInnerRef.current?.(nxt),300)
+              }
+            }catch{}
+          }
+          window.addEventListener('message',onMsg)
+          // Auto-advance after duration as fallback
+          if(track.durationSecs&&track.durationSecs>0){
+            const timer=setTimeout(()=>{
+              window.removeEventListener('message',onMsg)
+              const nxt=getNextRef.current?.(currentRef.current)
+              if(nxt) playInnerRef.current?.(nxt)
+            },(track.durationSecs+5)*1000)
+            // Clean up on next track
+            const cleanup=()=>{ clearTimeout(timer); window.removeEventListener('message',onMsg); window.removeEventListener('beforeplay',cleanup) }
+            window.addEventListener('beforeplay',cleanup,{once:true})
+          }
+          setIsPlaying(true); isPlayingRef.current=true
+          silentAudio.current?.play().catch(()=>{})
+          return
+        }
+      }
+      // No permalink — skip to next
       const nxt=getNextRef.current?.(currentRef.current)
-      if(nxt) setTimeout(()=>playInnerRef.current?.(nxt),500)
+      if(nxt) setTimeout(()=>playInnerRef.current?.(nxt),300)
       return
     }
 
@@ -346,6 +367,7 @@ function PlayerProvider({children}:{children:React.ReactNode}){
       )}
       <div style={{position:'fixed',bottom:-9999,left:-9999,width:1,height:1,overflow:'hidden',pointerEvents:'none'}} aria-hidden="true">
         <div id="yt-iframe"/>
+        <iframe id="sc-widget" allow="autoplay" style={{width:1,height:1,border:'none'}}/>
       </div>
     </Ctx.Provider>
   )
@@ -617,16 +639,16 @@ function MainApp(){
     id:          String(v.id),
     youtubeId:   undefined,
     title:       v.title,
-    artist:      v.channel||v.artist||'',
-    channel:     v.channel||v.artist||'',
-    thumbnail:   v.thumbnail||'',
-    duration:    v.duration||'',
+    artist:      v.user?.username||v.channel||v.artist||'',
+    channel:     v.user?.username||v.channel||v.artist||'',
+    thumbnail:   (v.artwork_url||v.thumbnail||'').replace('large','t300x300'),
+    duration:    v.duration ? `${Math.floor(v.duration/60000)}:${String(Math.floor((v.duration%60000)/1000)).padStart(2,'0')}` : v.dur||'',
     source:      'soundcloud' as const,
     isMix:       false,
     playlistId:  undefined,
-    durationSecs:v.durationSecs,
-    permalinkUrl:v.permalinkUrl||'',
-    scClientId:  v.clientId||'',
+    durationSecs:v.duration ? Math.round(v.duration/1000) : v.durationSecs||0,
+    permalinkUrl:v.permalink_url||v.permalinkUrl||'',
+    scClientId:  '',
   })
 
   const ytSearch=async(q:string):Promise<Track[]>=>{
@@ -636,14 +658,12 @@ function MainApp(){
     }catch{return[]}
   }
 
-  // Artist search — sorted by play count
   const ytSearchArtist=async(artist:string):Promise<Track[]>=>{
     try{
       const enc=(s:string)=>encodeURIComponent(s)
-      const base=artist.trim()
       const [r1,r2]=await Promise.all([
-        fetch(`/api/search-soundcloud?q=${enc(base)}&mode=artist`).then(r=>r.json()),
-        fetch(`/api/search-soundcloud?q=${enc(base+' official')}&mode=artist`).then(r=>r.json()),
+        fetch(`/api/search-soundcloud?q=${enc(artist)}&mode=artist`).then(r=>r.json()),
+        fetch(`/api/search-soundcloud?q=${enc(artist+' official')}&mode=artist`).then(r=>r.json()),
       ])
       const seen=new Set<string>()
       return[...(r1.results||[]),...(r2.results||[])]
