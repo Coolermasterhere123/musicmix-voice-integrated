@@ -254,6 +254,18 @@ function PlayerProvider({children}:{children:React.ReactNode}){
   useEffect(()=>{ switchToIframeRef.current=switchToIframe },[switchToIframe])
 
   // Main play function — tries native audio first, falls back to iframe
+  // Check if running inside Capacitor APK (not browser)
+  const isCapacitor=useRef(typeof (window as any).Capacitor!=='undefined'&&(window as any).Capacitor?.isNativePlatform?.())
+
+  // Get NativeAudio plugin if available
+  const getNativeAudio=()=>{
+    try{
+      const cap=(window as any).Capacitor
+      if(cap?.isNativePlatform?.()&&cap?.Plugins?.NativeAudio) return cap.Plugins.NativeAudio
+    }catch{}
+    return null
+  }
+
   const playTrackInner=useCallback(async(track:Track)=>{
     const vid=track.youtubeId||track.id
     setCurrentTrack(track); currentRef.current=track
@@ -266,7 +278,66 @@ function PlayerProvider({children}:{children:React.ReactNode}){
     if(audioModeRef.current==='iframe') ytPlayer.current?.pauseVideo?.()
     clearInterval(progressInt.current)
 
-    // Try direct audio URL (works in background on iOS)
+    // ── Try @mediagrid/capacitor-native-audio (APK only) ─────────────────────
+    // This plays natively with full background/lockscreen support
+    const NativeAudio=getNativeAudio()
+    if(NativeAudio){
+      try{
+        // Get direct audio URL from our API
+        const resp=await fetch(`/api/yt-audio?videoId=${vid}`)
+        if(resp.ok){
+          const data=await resp.json()
+          if(data.audioUrl&&!data.error){
+            setLoadingAudio(false)
+            // Destroy previous instance
+            try{ await NativeAudio.destroy({audioId:'main'}) }catch{}
+            // Create new native audio instance
+            await NativeAudio.create({
+              audioId:      'main',
+              audioSource:  data.audioUrl,
+              friendlyTitle: track.title,
+              artistName:   track.artist||track.channel||'',
+              albumTitle:   'MusicMix',
+              artworkSource: track.thumbnail||'',
+              useForNotification: true,
+              isBackgroundMusic: false,
+              showSeekBackward: false,
+              showSeekForward: false,
+            })
+            // Register end callback → auto-advance
+            NativeAudio.onAudioEnd({audioId:'main'},()=>{
+              const nxt=getNextRef.current?.(currentRef.current)
+              if(nxt) setTimeout(()=>playInnerRef.current?.(nxt),300)
+            })
+            // Register playback status callback → sync UI
+            NativeAudio.onPlaybackStatusChange({audioId:'main'},(result:any)=>{
+              if(result.status==='playing'){ setIsPlaying(true); isPlayingRef.current=true }
+              else{ setIsPlaying(false); isPlayingRef.current=false }
+            })
+            await NativeAudio.initialize({audioId:'main'})
+            await NativeAudio.play({audioId:'main'})
+            audioModeRef.current='native'
+            // Poll progress
+            progressInt.current=setInterval(async()=>{
+              try{
+                const [ct,dur]=await Promise.all([
+                  NativeAudio.getCurrentTime({audioId:'main'}),
+                  NativeAudio.getDuration({audioId:'main'}),
+                ])
+                if(dur.duration>0){
+                  setCurrentTime(ct.currentTime)
+                  setDuration(dur.duration)
+                  setProgress(ct.currentTime/dur.duration)
+                }
+              }catch{}
+            },1000)
+            return
+          }
+        }
+      }catch(e){ console.log('NativeAudio failed, falling back',e) }
+    }
+
+    // ── Try direct HTML5 audio URL (browser) ─────────────────────────────────
     try{
       const resp=await fetch(`/api/yt-audio?videoId=${vid}`)
       if(resp.ok){
@@ -284,7 +355,7 @@ function PlayerProvider({children}:{children:React.ReactNode}){
       }
     }catch(e){ console.log('yt-audio failed, using iframe fallback') }
 
-    // Fallback to iframe
+    // ── Fallback to YouTube iframe ────────────────────────────────────────────
     setLoadingAudio(false)
     switchToIframe(track)
     silentAudio.current?.play().catch(()=>{})
@@ -301,6 +372,17 @@ function PlayerProvider({children}:{children:React.ReactNode}){
   const prev=useCallback(()=>{ const t=getPrev(currentRef.current); if(t) playTrackInner(t) },[getPrev,playTrackInner])
 
   const togglePlay=useCallback(()=>{
+    const NativeAudio=getNativeAudio()
+    if(NativeAudio&&audioModeRef.current==='native'){
+      if(isPlayingRef.current){
+        NativeAudio.pause({audioId:'main'}).catch(()=>{})
+        setIsPlaying(false); isPlayingRef.current=false
+      } else {
+        NativeAudio.play({audioId:'main'}).catch(()=>{})
+        setIsPlaying(true); isPlayingRef.current=true
+      }
+      return
+    }
     if(audioModeRef.current==='native'){
       const audio=nativeAudio.current!
       if(isPlayingRef.current){ audio.pause(); silentAudio.current?.pause(); setIsPlaying(false); isPlayingRef.current=false }
