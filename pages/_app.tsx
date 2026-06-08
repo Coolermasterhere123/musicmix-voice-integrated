@@ -79,10 +79,45 @@ function PlayerProvider({children}:{children:React.ReactNode}){
   const acquireWake=async()=>{
     try{ if('wakeLock' in navigator) wakeLock.current=await (navigator as any).wakeLock.request('screen') }catch{}
   }
+
+  // Keep audio alive when screen locks / app goes to background
   useEffect(()=>{
-    const h=()=>{ if(document.visibilityState==='visible'&&isPlayingRef.current) acquireWake() }
+    const h=()=>{
+      if(document.visibilityState==='visible'){
+        // Coming back to foreground — re-acquire wake lock and resume
+        acquireWake()
+        if(isPlayingRef.current){
+          if(audioModeRef.current==='native') nativeAudio.current?.play().catch(()=>{})
+          else ytPlayer.current?.playVideo?.()
+          silentAudio.current?.play().catch(()=>{})
+        }
+      }
+      // Do NOT pause when going to background — let it keep playing
+    }
     document.addEventListener('visibilitychange',h)
-    return()=>document.removeEventListener('visibilitychange',h)
+
+    // Web Audio API heartbeat — ping every 5s to prevent browser from
+    // suspending the audio context when screen is off
+    let audioCtx:AudioContext|null=null
+    const heartbeat=setInterval(()=>{
+      if(!isPlayingRef.current) return
+      try{
+        if(!audioCtx) audioCtx=new AudioContext()
+        if(audioCtx.state==='suspended') audioCtx.resume()
+        // Play a completely silent buffer — just enough to keep audio active
+        const buf=audioCtx.createBuffer(1,1,22050)
+        const src=audioCtx.createBufferSource()
+        src.buffer=buf
+        src.connect(audioCtx.destination)
+        src.start()
+      }catch{}
+    },5000)
+
+    return()=>{
+      document.removeEventListener('visibilitychange',h)
+      clearInterval(heartbeat)
+      audioCtx?.close().catch(()=>{})
+    }
   },[])
 
   useEffect(()=>{
