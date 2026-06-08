@@ -584,6 +584,9 @@ function MainApp(){
   const[playlistSize,setPlaylistSize]   =useState(20)
   const allSuggestedRef=useRef<string[]>([])
   const radioAudioRef=useRef<HTMLAudioElement|null>(null)
+  const radioStationsRef=useRef<Station[]>([])
+  const playingStationRef=useRef<string|null>(null)
+  const viewRef=useRef<string>('home')
   const scrollRef=useRef<HTMLDivElement>(null)
 
 
@@ -714,6 +717,25 @@ function MainApp(){
   const[radioStations,setRadioStations]=useState<Station[]>([])
   const[playingStation,setPlayingStation]=useState<string|null>(null)
   const[radioLoading,setRadioLoading]=useState(false)
+  const[favorites,setFavorites]=useState<Station[]>(()=>{
+    try{ return JSON.parse(localStorage.getItem('radioFavorites')||'[]') }catch{ return[] }
+  })
+
+  // Keep refs in sync so car controls always have fresh values
+  useEffect(()=>{ radioStationsRef.current=radioStations },[radioStations])
+  useEffect(()=>{ playingStationRef.current=playingStation },[playingStation])
+  useEffect(()=>{ viewRef.current=view },[view])
+
+  const toggleFavorite=(station:Station,e:React.MouseEvent)=>{
+    e.stopPropagation()
+    setFavorites(prev=>{
+      const exists=prev.some(f=>f.name===station.name)
+      const next=exists?prev.filter(f=>f.name!==station.name):[...prev,station]
+      try{ localStorage.setItem('radioFavorites',JSON.stringify(next)) }catch{}
+      return next
+    })
+  }
+  const isFavorite=(name:string)=>favorites.some(f=>f.name===name)
 
   const fetchRadioStations=async()=>{
     setRadioLoading(true)
@@ -832,19 +854,22 @@ function MainApp(){
     window.addEventListener('message',handleMessage)
     ;(window as any).voiceSearch=(q:string)=>doVoiceSearch(q)
 
-    // ── Car stereo controls ───────────────────────────────────────────────────
+    // ── Car stereo controls — use refs so values are always fresh ─────────────
     ;(window as any).carControl=(action:string)=>{
-      if(view==='radio'){
-        const idx=radioStations.findIndex((s:any)=>s.name===playingStation)
+      const inRadio=viewRef.current==='radio'
+      const stations=radioStationsRef.current
+      const playing=playingStationRef.current
+      if(inRadio){
+        const idx=stations.findIndex(s=>s.name===playing)
         if(action==='next'){
-          const n=radioStations[(idx+1)%radioStations.length]
+          const n=stations[(idx+1)%stations.length]
           if(n) playStation(n)
         } else if(action==='prev'){
-          const p=radioStations[(idx-1+radioStations.length)%radioStations.length]
+          const p=stations[(idx-1+stations.length)%stations.length]
           if(p) playStation(p)
         } else if(action==='togglePlay'){
-          if(playingStation) stopRadio()
-          else if(radioStations.length) playStation(radioStations[0])
+          if(playing) stopRadio()
+          else if(stations.length) playStation(stations[0])
         } else if(action==='stop'){
           stopRadio()
         }
@@ -858,8 +883,9 @@ function MainApp(){
 
     // ── Bluetooth auto-start ──────────────────────────────────────────────────
     ;(window as any).bluetoothAutoStart=()=>{
-      if(view==='radio'){
-        if(!playingStation&&radioStations.length) playStation(radioStations[0])
+      if(viewRef.current==='radio'){
+        if(!playingStationRef.current&&radioStationsRef.current.length)
+          playStation(radioStationsRef.current[0])
       } else if(currentTrack){
         if(!isPlaying) togglePlay()
       } else {
@@ -869,7 +895,7 @@ function MainApp(){
     }
     ;(window as any).bluetoothDisconnected=()=>{
       if(isPlaying) togglePlay()
-      if(playingStation) stopRadio()
+      stopRadio()
     }
     return()=>window.removeEventListener('message',handleMessage)
   },[])
@@ -993,26 +1019,72 @@ function MainApp(){
                 <button onClick={fetchRadioStations} style={{marginTop:16,padding:'12px 24px',borderRadius:12,background:'#00bcd422',color:'#00bcd4',border:'2px solid #00bcd4',fontSize:16,fontWeight:700,cursor:'pointer'}}>Try Again</button>
               </div>
             )}
+            {/* Favorites section */}
+            {favorites.length>0&&(
+              <div style={{marginBottom:18}}>
+                <div style={{fontSize:14,fontWeight:700,color:'#ffb300',letterSpacing:2,marginBottom:10}}>★ FAVORITES</div>
+                <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                  {favorites.map((s,i)=>(
+                    <div key={i} style={{display:'flex',gap:8,alignItems:'stretch'}}>
+                      <button onClick={()=>playingStation===s.name?stopRadio():playStation(s)}
+                        style={{flex:1,display:'flex',alignItems:'center',gap:14,padding:'12px 16px',
+                          borderRadius:14,textAlign:'left',cursor:'pointer',
+                          background:playingStation===s.name?'#00bcd422':'#ffb30011',
+                          border:playingStation===s.name?'2px solid #00bcd4':'2px solid #ffb30044',
+                          transition:'all 0.15s'}}>
+                        <span style={{fontSize:26,flexShrink:0}}>{s.logo}</span>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontWeight:700,fontSize:15,color:playingStation===s.name?'#00bcd4':'#ffb300',
+                            whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+                            {playingStation===s.name?'▶ ':''}{s.name}
+                          </div>
+                          <div style={{fontSize:12,color:'var(--text-muted)',marginTop:2,textTransform:'capitalize'}}>{s.genre}</div>
+                        </div>
+                        <span style={{fontSize:18,flexShrink:0,color:playingStation===s.name?'#00bcd4':'#ffb300'}}>
+                          {playingStation===s.name?'🔊':'▶'}
+                        </span>
+                      </button>
+                      <button onClick={(e)=>toggleFavorite(s,e)}
+                        style={{width:48,borderRadius:14,border:'2px solid #ffb30044',
+                          background:'#ffb30022',fontSize:22,cursor:'pointer',
+                          flexShrink:0,color:'#ffb300'}}>★</button>
+                    </div>
+                  ))}
+                </div>
+                <div style={{height:1,background:'var(--border)',margin:'16px 0'}}/>
+              </div>
+            )}
             <div style={{display:'flex',flexDirection:'column',gap:10}}>
               {radioStations.map((s,i)=>(
-                <button key={i} onClick={()=>playingStation===s.name?stopRadio():playStation(s)}
-                  style={{display:'flex',alignItems:'center',gap:14,padding:'14px 16px',
-                    borderRadius:14,textAlign:'left',cursor:'pointer',
-                    background:playingStation===s.name?'#00bcd422':'var(--card)',
-                    border:playingStation===s.name?'2px solid #00bcd4':'2px solid var(--border)',
-                    transition:'all 0.15s'}}>
-                  <span style={{fontSize:28,flexShrink:0}}>{s.logo}</span>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontWeight:700,fontSize:16,color:playingStation===s.name?'#00bcd4':'var(--text)',
-                      whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
-                      {playingStation===s.name?'▶ ':''}{s.name}
+                <div key={i} style={{display:'flex',gap:8,alignItems:'stretch'}}>
+                  <button onClick={()=>playingStation===s.name?stopRadio():playStation(s)}
+                    style={{flex:1,display:'flex',alignItems:'center',gap:14,padding:'14px 16px',
+                      borderRadius:14,textAlign:'left',cursor:'pointer',
+                      background:playingStation===s.name?'#00bcd422':'var(--card)',
+                      border:playingStation===s.name?'2px solid #00bcd4':'2px solid var(--border)',
+                      transition:'all 0.15s'}}>
+                    <span style={{fontSize:28,flexShrink:0}}>{s.logo}</span>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontWeight:700,fontSize:16,color:playingStation===s.name?'#00bcd4':'var(--text)',
+                        whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+                        {playingStation===s.name?'▶ ':''}{s.name}
+                      </div>
+                      <div style={{fontSize:13,color:'var(--text-muted)',marginTop:2,textTransform:'capitalize'}}>{s.genre}</div>
                     </div>
-                    <div style={{fontSize:13,color:'var(--text-muted)',marginTop:2,textTransform:'capitalize'}}>{s.genre}</div>
-                  </div>
-                  <span style={{fontSize:20,flexShrink:0,color:playingStation===s.name?'#00bcd4':'var(--text-muted)'}}>
-                    {playingStation===s.name?'🔊':'▶'}
-                  </span>
-                </button>
+                    <span style={{fontSize:20,flexShrink:0,color:playingStation===s.name?'#00bcd4':'var(--text-muted)'}}>
+                      {playingStation===s.name?'🔊':'▶'}
+                    </span>
+                  </button>
+                  <button onClick={(e)=>toggleFavorite(s,e)}
+                    title={isFavorite(s.name)?'Remove from favorites':'Add to favorites'}
+                    style={{width:48,borderRadius:14,border:'2px solid var(--border)',
+                      background:isFavorite(s.name)?'#ffb30022':'var(--card)',
+                      fontSize:22,cursor:'pointer',flexShrink:0,
+                      color:isFavorite(s.name)?'#ffb300':'var(--text-muted)',
+                      transition:'all 0.15s'}}>
+                    {isFavorite(s.name)?'★':'☆'}
+                  </button>
+                </div>
               ))}
             </div>
           </div>
