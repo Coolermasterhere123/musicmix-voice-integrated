@@ -254,11 +254,9 @@ function PlayerProvider({children}:{children:React.ReactNode}){
   useEffect(()=>{ switchToIframeRef.current=switchToIframe },[switchToIframe])
 
   // Main play function — tries native audio first, falls back to iframe
-  // Check if running inside Capacitor APK (not browser)
-  const isCapacitor=useRef(typeof (window as any).Capacitor!=='undefined'&&(window as any).Capacitor?.isNativePlatform?.())
-
-  // Get NativeAudio plugin if available
+  // Get NativeAudio plugin if available (only in Capacitor APK)
   const getNativeAudio=()=>{
+    if(typeof window==='undefined') return null
     try{
       const cap=(window as any).Capacitor
       if(cap?.isNativePlatform?.()&&cap?.Plugins?.NativeAudio) return cap.Plugins.NativeAudio
