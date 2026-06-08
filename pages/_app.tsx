@@ -253,14 +253,42 @@ function PlayerProvider({children}:{children:React.ReactNode}){
   },[])
   useEffect(()=>{ switchToIframeRef.current=switchToIframe },[switchToIframe])
 
-  // Main play function — tries native audio first, falls back to iframe
-  // Get NativeAudio plugin if available (only in Capacitor APK)
+  // Get NativeAudio plugin if available (only runs in Capacitor APK, not browser)
   const getNativeAudio=()=>{
     if(typeof window==='undefined') return null
     try{
       const cap=(window as any).Capacitor
       if(cap?.isNativePlatform?.()&&cap?.Plugins?.NativeAudio) return cap.Plugins.NativeAudio
     }catch{}
+    return null
+  }
+
+  // Fetch direct audio URL client-side via Invidious (bypasses Vercel restrictions)
+  const getAudioUrl=async(videoId:string):Promise<string|null>=>{
+    const instances=[
+      'https://inv.nadeko.net',
+      'https://invidious.nerdvpn.de',
+      'https://yt.artemislena.eu',
+      'https://invidious.privacyredirect.com',
+      'https://invidious.io.lol',
+    ]
+    for(const inst of instances){
+      try{
+        const r=await fetch(`${inst}/api/v1/videos/${videoId}?fields=adaptiveFormats`,{
+          signal:AbortSignal.timeout(5000)
+        })
+        if(!r.ok) continue
+        const data=await r.json()
+        // Get best audio-only format
+        const audioFormats=(data.adaptiveFormats||[])
+          .filter((f:any)=>f.type?.includes('audio')&&f.url)
+          .sort((a:any,b:any)=>(b.bitrate||0)-(a.bitrate||0))
+        if(audioFormats.length>0){
+          console.log('Got audio URL from',inst)
+          return audioFormats[0].url
+        }
+      }catch(e){ continue }
+    }
     return null
   }
 
@@ -276,84 +304,70 @@ function PlayerProvider({children}:{children:React.ReactNode}){
     if(audioModeRef.current==='iframe') ytPlayer.current?.pauseVideo?.()
     clearInterval(progressInt.current)
 
-    // ── Try @mediagrid/capacitor-native-audio (APK only) ─────────────────────
-    // This plays natively with full background/lockscreen support
-    const NativeAudio=getNativeAudio()
-    if(NativeAudio){
+    // ── Try to get direct audio URL (client-side, works in WebView) ───────────
+    const audioUrl=await getAudioUrl(vid)
+
+    if(audioUrl){
+      // ── Use NativeAudio plugin if in Capacitor APK ──────────────────────────
+      const NativeAudio=getNativeAudio()
+      if(NativeAudio){
+        try{
+          setLoadingAudio(false)
+          try{ await NativeAudio.destroy({audioId:'main'}) }catch{}
+          await NativeAudio.create({
+            audioId:          'main',
+            audioSource:      audioUrl,
+            friendlyTitle:    track.title,
+            artistName:       track.artist||track.channel||'',
+            albumTitle:       'MusicMix',
+            artworkSource:    track.thumbnail||'',
+            useForNotification: true,
+            isBackgroundMusic: false,
+            showSeekBackward:  false,
+            showSeekForward:   false,
+          })
+          NativeAudio.onAudioEnd({audioId:'main'},()=>{
+            const nxt=getNextRef.current?.(currentRef.current)
+            if(nxt) setTimeout(()=>playInnerRef.current?.(nxt),300)
+          })
+          NativeAudio.onPlaybackStatusChange({audioId:'main'},(result:any)=>{
+            if(result.status==='playing'){ setIsPlaying(true); isPlayingRef.current=true }
+            else{ setIsPlaying(false); isPlayingRef.current=false }
+          })
+          await NativeAudio.initialize({audioId:'main'})
+          await NativeAudio.play({audioId:'main'})
+          audioModeRef.current='native'
+          progressInt.current=setInterval(async()=>{
+            try{
+              const [ct,dur]=await Promise.all([
+                NativeAudio.getCurrentTime({audioId:'main'}),
+                NativeAudio.getDuration({audioId:'main'}),
+              ])
+              if(dur.duration>0){
+                setCurrentTime(ct.currentTime)
+                setDuration(dur.duration)
+                setProgress(ct.currentTime/dur.duration)
+              }
+            }catch{}
+          },1000)
+          return
+        }catch(e){ console.log('NativeAudio failed',e) }
+      }
+
+      // ── Fallback: HTML5 audio element (browser) ─────────────────────────────
       try{
-        // Get direct audio URL from our API
-        const resp=await fetch(`/api/yt-audio?videoId=${vid}`)
-        if(resp.ok){
-          const data=await resp.json()
-          if(data.audioUrl&&!data.error){
-            setLoadingAudio(false)
-            // Destroy previous instance
-            try{ await NativeAudio.destroy({audioId:'main'}) }catch{}
-            // Create new native audio instance
-            await NativeAudio.create({
-              audioId:      'main',
-              audioSource:  data.audioUrl,
-              friendlyTitle: track.title,
-              artistName:   track.artist||track.channel||'',
-              albumTitle:   'MusicMix',
-              artworkSource: track.thumbnail||'',
-              useForNotification: true,
-              isBackgroundMusic: false,
-              showSeekBackward: false,
-              showSeekForward: false,
-            })
-            // Register end callback → auto-advance
-            NativeAudio.onAudioEnd({audioId:'main'},()=>{
-              const nxt=getNextRef.current?.(currentRef.current)
-              if(nxt) setTimeout(()=>playInnerRef.current?.(nxt),300)
-            })
-            // Register playback status callback → sync UI
-            NativeAudio.onPlaybackStatusChange({audioId:'main'},(result:any)=>{
-              if(result.status==='playing'){ setIsPlaying(true); isPlayingRef.current=true }
-              else{ setIsPlaying(false); isPlayingRef.current=false }
-            })
-            await NativeAudio.initialize({audioId:'main'})
-            await NativeAudio.play({audioId:'main'})
-            audioModeRef.current='native'
-            // Poll progress
-            progressInt.current=setInterval(async()=>{
-              try{
-                const [ct,dur]=await Promise.all([
-                  NativeAudio.getCurrentTime({audioId:'main'}),
-                  NativeAudio.getDuration({audioId:'main'}),
-                ])
-                if(dur.duration>0){
-                  setCurrentTime(ct.currentTime)
-                  setDuration(dur.duration)
-                  setProgress(ct.currentTime/dur.duration)
-                }
-              }catch{}
-            },1000)
-            return
-          }
-        }
-      }catch(e){ console.log('NativeAudio failed, falling back',e) }
+        const audio=nativeAudio.current!
+        audio.src=audioUrl
+        audio.load()
+        audioModeRef.current='native'
+        await audio.play()
+        silentAudio.current?.play().catch(()=>{})
+        setLoadingAudio(false)
+        return
+      }catch(e){ console.log('HTML5 audio failed') }
     }
 
-    // ── Try direct HTML5 audio URL (browser) ─────────────────────────────────
-    try{
-      const resp=await fetch(`/api/yt-audio?videoId=${vid}`)
-      if(resp.ok){
-        const data=await resp.json()
-        if(data.audioUrl&&!data.error){
-          const audio=nativeAudio.current!
-          audio.src=data.audioUrl
-          audio.load()
-          audioModeRef.current='native'
-          await audio.play()
-          silentAudio.current?.play().catch(()=>{})
-          setLoadingAudio(false)
-          return
-        }
-      }
-    }catch(e){ console.log('yt-audio failed, using iframe fallback') }
-
-    // ── Fallback to YouTube iframe ────────────────────────────────────────────
+    // ── Final fallback: YouTube iframe ─────────────────────────────────────
     setLoadingAudio(false)
     switchToIframe(track)
     silentAudio.current?.play().catch(()=>{})
