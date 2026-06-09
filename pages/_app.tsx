@@ -1339,7 +1339,7 @@ function MainApp(){
 }
 
 // ─── Voice Search Button ──────────────────────────────────────────────────────
-function VoiceButton(){
+function VoiceButton():JSX.Element{
   const[listening,setListening]=useState(false)
   const[transcript,setTranscript]=useState('')
   const[label,setLabel]=useState('LISTENING...')
@@ -1356,4 +1356,145 @@ function VoiceButton(){
     ;(window as any).onNativeSpeechResult=(t:string)=>{
       setTranscript('\u201c'+t+'\u201d'); setLabel('SEARCHING...')
       setTimeout(()=>{
-        if(typeof (window as any).voiceSearch==='function'
+        if(typeof (window as any).voiceSearch==='function') (window as any).voiceSearch(t)
+        else window.postMessage({type:'voiceSearch',query:t,voice:true},'*')
+      },300)
+      setTimeout(()=>{ setListening(false) },1500)
+    }
+    ;(window as any).onNativeSpeechError=()=>setListening(false)
+  },[])
+
+  const startListening=()=>{
+    // Native Android bridge
+    if((window as any).NativeSpeech){
+      setListening(true); setLabel('LISTENING...'); setTranscript('Say artist and song name')
+      ;(window as any).NativeSpeech.startListening()
+      return
+    }
+    // Web Speech API (PWA / browser)
+    const SR=(window as any).SpeechRecognition||(window as any).webkitSpeechRecognition
+    if(!SR){ alert('Speech recognition not supported in this browser'); return }
+    const rec=new SR()
+    recognitionRef.current=rec
+    rec.continuous=false; rec.interimResults=true; rec.lang='en-US'; rec.maxAlternatives=3
+    rec.onstart=()=>{ setListening(true); setLabel('LISTENING...'); setTranscript('Say artist and song name') }
+    rec.onresult=(e:any)=>{
+      let final='',interim=''
+      for(let i=e.resultIndex;i<e.results.length;i++){
+        if(e.results[i].isFinal) final+=e.results[i][0].transcript
+        else interim+=e.results[i][0].transcript
+      }
+      setTranscript(final||interim)
+    }
+    rec.onend=()=>{
+      const t=recognitionRef.current?._finalTranscript||''
+      if(t){
+        setTranscript('\u201c'+t+'\u201d'); setLabel('SEARCHING...')
+        setTimeout(()=>{
+          if(typeof (window as any).voiceSearch==='function') (window as any).voiceSearch(t)
+          else window.postMessage({type:'voiceSearch',query:t,voice:true},'*')
+        },300)
+        setTimeout(()=>setListening(false),1500)
+      } else { setListening(false) }
+    }
+    rec.onerror=()=>setListening(false)
+    // Store final transcript
+    rec.onresult=(e:any)=>{
+      let final='',interim=''
+      for(let i=e.resultIndex;i<e.results.length;i++){
+        if(e.results[i].isFinal) final+=e.results[i][0].transcript
+        else interim+=e.results[i][0].transcript
+      }
+      if(final) recognitionRef.current._finalTranscript=final
+      setTranscript(final||interim)
+    }
+    rec.start()
+  }
+
+  const stopListening=()=>{
+    if((window as any).NativeSpeech) (window as any).NativeSpeech.stopListening()
+    else recognitionRef.current?.stop()
+    setListening(false)
+  }
+
+  return(
+    <>
+      {/* Listening overlay */}
+      {listening&&(
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.92)',zIndex:9999,
+          display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:24}}>
+          <style>{`@keyframes mmRing{0%{transform:scale(0.5);opacity:1}100%{transform:scale(1.5);opacity:0}}`}</style>
+          <div style={{position:'relative',width:130,height:130,display:'flex',alignItems:'center',justifyContent:'center'}}>
+            {[0,1,2].map(i=>(
+              <div key={i} style={{position:'absolute',width:'100%',height:'100%',borderRadius:'50%',
+                border:'2px solid #e040fb',
+                animation:`mmRing 1.5s ${i*0.5}s infinite`}}/>
+            ))}
+            <svg width={60} height={60} viewBox="0 0 64 64" fill="none">
+              <rect x={22} y={8} width={20} height={32} rx={10} fill="rgba(224,64,251,0.2)" stroke="#e040fb" strokeWidth={2}/>
+              <path d="M14 32c0 9.94 8.06 18 18 18s18-8.06 18-18" stroke="#e040fb" strokeWidth={2} strokeLinecap="round" fill="none"/>
+              <line x1={32} y1={50} x2={32} y2={58} stroke="#e040fb" strokeWidth={2} strokeLinecap="round"/>
+              <line x1={24} y1={58} x2={40} y2={58} stroke="#e040fb" strokeWidth={2} strokeLinecap="round"/>
+            </svg>
+          </div>
+          <div style={{color:'#e040fb',fontSize:14,letterSpacing:4,fontWeight:'bold'}}>{label}</div>
+          <div style={{color:'#fff',fontSize:18,textAlign:'center',padding:'0 32px',minHeight:28}}>{transcript}</div>
+          <div style={{color:'#666',fontSize:11,letterSpacing:2,textAlign:'center'}}>
+            e.g. "Bohemian Rhapsody by Queen"
+          </div>
+          <button onClick={stopListening}
+            style={{marginTop:8,background:'none',border:'1px solid #333',color:'#888',
+              fontSize:11,letterSpacing:2,padding:'10px 28px',cursor:'pointer',borderRadius:4}}>
+            CANCEL
+          </button>
+        </div>
+      )}
+
+      {/* Floating mic button — sits above player bar */}
+      <button onClick={listening?stopListening:startListening}
+        style={{
+          position:'fixed',
+          bottom: currentTrack ? 100 : 16,
+          left:'50%',transform:'translateX(-50%)',
+          zIndex:9998,width:64,height:64,borderRadius:'50%',
+          background:listening?'linear-gradient(135deg,#3a0010,#1a0020)':'linear-gradient(135deg,#1a0a2e,#0a0a1e)',
+          border:listening?'2px solid #ff1744':'2px solid #e040fb',
+          boxShadow:listening?'0 0 25px rgba(255,23,68,0.5)':'0 0 25px rgba(224,64,251,0.5)',
+          display:'flex',alignItems:'center',justifyContent:'center',
+          cursor:'pointer',outline:'none',WebkitTapHighlightColor:'transparent',
+          animation:listening?'btnPulse 1s ease-in-out infinite':'none',
+          transition:'bottom 0.3s',
+        }}>
+        <style>{`@keyframes btnPulse{0%,100%{transform:translateX(-50%) scale(1)}50%{transform:translateX(-50%) scale(1.1)}}`}</style>
+        <svg width={28} height={28} viewBox="0 0 28 28" fill="none">
+          <rect x={9} y={3} width={10} height={16} rx={5}
+            fill={listening?"rgba(255,23,68,0.2)":"rgba(224,64,251,0.15)"}
+            stroke={listening?"#ff1744":"#e040fb"} strokeWidth={1.5}/>
+          <path d="M5 14c0 4.97 4.03 9 9 9s9-4.03 9-9"
+            stroke={listening?"#ff1744":"#e040fb"} strokeWidth={1.5} strokeLinecap="round" fill="none"/>
+          <line x1={14} y1={23} x2={14} y2={27} stroke={listening?"#ff1744":"#e040fb"} strokeWidth={1.5} strokeLinecap="round"/>
+          <line x1={10} y1={27} x2={18} y2={27} stroke={listening?"#ff1744":"#e040fb"} strokeWidth={1.5} strokeLinecap="round"/>
+        </svg>
+      </button>
+    </>
+  )
+}
+export default function App({Component,pageProps}:AppProps){
+  return(
+    <PlayerProvider>
+      <Head>
+        <title>SonicWave</title>
+        <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover"/>
+        <meta name="theme-color" content="#0a0a0f"/>
+        <meta name="description" content="AI-powered music player"/>
+        <meta name="mobile-web-app-capable" content="yes"/>
+        <meta name="apple-mobile-web-app-capable" content="yes"/>
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+        <meta name="apple-mobile-web-app-title" content="SonicWave"/>
+        <link rel="manifest" href="/manifest.json"/>
+        <link rel="apple-touch-icon" href="/icon-192.png"/>
+      </Head>
+      <MainApp/>
+    </PlayerProvider>
+  )
+}
