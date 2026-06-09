@@ -1333,27 +1333,27 @@ function MainApp(){
       </div>
 
       <PlayerBar/>
+      <VoiceButton/>
     </div>
   )
 }
 
-// ─── App Root ─────────────────────────────────────────────────────────────────
-export default function App({Component,pageProps}:AppProps){
-  return(
-    <PlayerProvider>
-      <Head>
-        <title>SonicWave</title>
-        <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover"/>
-        <meta name="theme-color" content="#0a0a0f"/>
-        <meta name="description" content="AI-powered music player"/>
-        <meta name="mobile-web-app-capable" content="yes"/>
-        <meta name="apple-mobile-web-app-capable" content="yes"/>
-        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
-        <meta name="apple-mobile-web-app-title" content="SonicWave"/>
-        <link rel="manifest" href="/manifest.json"/>
-        <link rel="apple-touch-icon" href="/icon-192.png"/>
-      </Head>
-      <MainApp/>
-    </PlayerProvider>
-  )
-}
+// ─── Voice Search Button ──────────────────────────────────────────────────────
+function VoiceButton(){
+  const[listening,setListening]=useState(false)
+  const[transcript,setTranscript]=useState('')
+  const[label,setLabel]=useState('LISTENING...')
+  const recognitionRef=useRef<any>(null)
+  const{currentTrack}=usePlayer()
+
+  // Use native Android bridge if available (APK), else Web Speech API
+  const isNative=typeof window!=='undefined'&&!!(window as any).NativeSpeech
+
+  useEffect(()=>{
+    if(typeof window==='undefined') return
+    // Register callbacks for native Android bridge
+    ;(window as any).onNativeSpeechStart=()=>{ setListening(true); setLabel('LISTENING...'); setTranscript('Say artist and song name') }
+    ;(window as any).onNativeSpeechResult=(t:string)=>{
+      setTranscript('\u201c'+t+'\u201d'); setLabel('SEARCHING...')
+      setTimeout(()=>{
+        if(typeof (window as any).voiceSearch==='function'
