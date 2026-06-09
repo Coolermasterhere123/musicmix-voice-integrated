@@ -126,6 +126,14 @@ function PlayerProvider({children}:{children:React.ReactNode}){
     if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{})
   },[])
 
+  // Tell service worker when audio is playing so it stays alive on lock screen
+  useEffect(()=>{
+    if(typeof window==='undefined'||!('serviceWorker' in navigator)) return
+    navigator.serviceWorker.ready.then(reg=>{
+      if(reg.active) reg.active.postMessage(isPlaying?'AUDIO_PLAYING':'AUDIO_STOPPED')
+    }).catch(()=>{})
+  },[isPlaying])
+
   // Silent keepalive — keeps MediaSession alive for Bluetooth headunit
   useEffect(()=>{
     if(typeof window==='undefined') return
