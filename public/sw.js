@@ -1,7 +1,6 @@
-const CACHE = 'musicmix-v3'
+const CACHE = 'musicmix-v4'
 const PRECACHE = ['/', '/manifest.json', '/icon-192.png', '/icon-512.png']
 
-// Install — cache shell
 self.addEventListener('install', e => {
   e.waitUntil(
     caches.open(CACHE)
@@ -10,7 +9,6 @@ self.addEventListener('install', e => {
   )
 })
 
-// Activate — delete old caches
 self.addEventListener('activate', e => {
   e.waitUntil(
     caches.keys()
@@ -19,45 +17,59 @@ self.addEventListener('activate', e => {
   )
 })
 
-// Fetch — network first for API and YouTube, cache first for assets
 self.addEventListener('fetch', e => {
   const url = e.request.url
 
-  // Never cache: API calls, YouTube, external streams
+  // Never intercept: API, YouTube, external audio streams, radio
   if (
     url.includes('/api/') ||
     url.includes('youtube.com') ||
     url.includes('ytimg.com') ||
     url.includes('googlevideo.com') ||
     url.includes('radio-browser') ||
-    url.includes('soundcloud')
-  ) {
-    return // let browser handle normally
-  }
+    url.includes('soundcloud') ||
+    url.includes('ggpht.com')
+  ) return
 
-  // Network first for navigation (always get fresh HTML)
   if (e.request.mode === 'navigate') {
     e.respondWith(
       fetch(e.request)
         .then(r => { caches.open(CACHE).then(c => c.put(e.request, r.clone())); return r })
-        .catch(() => caches.match(e.request))
+        .catch(() => caches.match('/'))
     )
     return
   }
 
-  // Cache first for static assets (JS, CSS, fonts, images)
   e.respondWith(
     caches.match(e.request).then(cached => {
       if (cached) return cached
       return fetch(e.request).then(r => {
-        if (r.ok) caches.open(CACHE).then(c => c.put(e.request, r.clone()))
+        if (r && r.ok) caches.open(CACHE).then(c => c.put(e.request, r.clone()))
         return r
       })
     })
   )
 })
 
-// Keep service worker alive for background audio
+// Keep SW alive — ping every 20s when audio is playing
+// This prevents the browser from killing the SW on lock screen
+let keepAliveInterval = null
+
 self.addEventListener('message', e => {
-  if (e.data === 'SKIP_WAITING') self.skipWaiting()
+  if (e.data === 'AUDIO_PLAYING') {
+    if (!keepAliveInterval) {
+      keepAliveInterval = setInterval(() => {
+        self.clients.matchAll().then(clients => {
+          clients.forEach(c => c.postMessage('SW_ALIVE'))
+        })
+      }, 20000)
+    }
+  }
+  if (e.data === 'AUDIO_STOPPED') {
+    clearInterval(keepAliveInterval)
+    keepAliveInterval = null
+  }
+  if (e.data === 'SKIP_WAITING') {
+    self.skipWaiting()
+  }
 })
