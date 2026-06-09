@@ -1306,40 +1306,6 @@ function MainApp(){
         </div>
       )}
 
-      {/* TV Scroll Buttons — big fixed up/down arrows on right side */}
-      <div style={{
-        position:'fixed', right:14, bottom:110, zIndex:90,
-        display:'flex', flexDirection:'column', gap:10,
-        pointerEvents:'none',
-      }}>
-        <button
-          onPointerDown={e=>{ e.preventDefault(); const el=scrollRef.current; if(!el) return; const iv=setInterval(()=>el.scrollBy({top:-220}),120); (e.currentTarget as any)._iv=iv }}
-          onPointerUp={e=>{ clearInterval((e.currentTarget as any)._iv) }}
-          onPointerLeave={e=>{ clearInterval((e.currentTarget as any)._iv) }}
-          style={{
-            width:64, height:64, borderRadius:18,
-            background:'rgba(232,255,71,0.18)', border:'2px solid rgba(232,255,71,0.5)',
-            color:'var(--accent)', fontSize:30, fontWeight:900,
-            display:'flex', alignItems:'center', justifyContent:'center',
-            cursor:'pointer', pointerEvents:'all',
-            boxShadow:'0 4px 20px rgba(0,0,0,0.5)',
-            backdropFilter:'blur(8px)',
-          }}>▲</button>
-        <button
-          onPointerDown={e=>{ e.preventDefault(); const el=scrollRef.current; if(!el) return; const iv=setInterval(()=>el.scrollBy({top:220}),120); (e.currentTarget as any)._iv=iv }}
-          onPointerUp={e=>{ clearInterval((e.currentTarget as any)._iv) }}
-          onPointerLeave={e=>{ clearInterval((e.currentTarget as any)._iv) }}
-          style={{
-            width:64, height:64, borderRadius:18,
-            background:'rgba(232,255,71,0.18)', border:'2px solid rgba(232,255,71,0.5)',
-            color:'var(--accent)', fontSize:30, fontWeight:900,
-            display:'flex', alignItems:'center', justifyContent:'center',
-            cursor:'pointer', pointerEvents:'all',
-            boxShadow:'0 4px 20px rgba(0,0,0,0.5)',
-            backdropFilter:'blur(8px)',
-          }}>▼</button>
-      </div>
-
       <PlayerBar/>
       <VoiceButton/>
     </div>
