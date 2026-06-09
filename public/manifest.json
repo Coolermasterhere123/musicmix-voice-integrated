@@ -5,11 +5,16 @@
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
   "background_color": "#0a0a0f",
   "theme_color": "#0a0a0f",
   "orientation": "portrait-primary",
   "categories": ["music", "entertainment"],
   "prefer_related_applications": false,
+  "handle_links": "preferred",
+  "launch_handler": {
+    "client_mode": "focus-existing"
+  },
   "icons": [
     {
       "src": "/icon-192.png",
